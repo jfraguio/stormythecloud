@@ -1,0 +1,1056 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stormy - Cortina de Lluvia, Evaporación y Burbuja Mejorada</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #87CEEB; /* Fondo azul claro */
+    }
+    canvas {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+  <script>
+    // ======================= CONFIGURACIÓN AJUSTABLE =========================
+    // Modifica estos valores según tus preferencias:
+    const BUBBLE_EXTRA_RADIUS = 35;  // Tamaño extra para la burbuja que envuelve a la nube blanca.
+    const ENEMY_SPAWN_INTERVAL_FACTOR = 0.7; // Factor para la frecuencia de aparición de nubes negras.
+
+    // ======================= CONFIGURACIÓN DEL JUEGO =========================
+    const PROTAGONISTA_SPEED = 4;                // Velocidad normal de la nube blanca (jugador)
+    const SPEED_RATIO = 1.3;                     // Relación para la velocidad de enemigos
+    const ENEMY_SPEED = PROTAGONISTA_SPEED / SPEED_RATIO;
+    const PROTAGONISTA_RADIUS = 16;              // Radio de la nube blanca
+    const ENEMY_RADIUS = 16;                     // Radio para nubes negras
+    const BIRD_COLLISION_RADIUS = 15;            // Radio de colisión entre la nube blanca y los pájaros
+    const BASE_ENEMY_INTERVAL = 10000;           // Intervalo base para nubes negras (ms)
+    const BIRD_SPAWN_INTERVAL = 5000;            // Intervalo para aparición de pájaros (ms)
+    const RAINBOW_DURATION = 3000;               // Duración de aparición del arcoíris (ms)
+    const RAINBOW_MODE_DURATION = 5000;          // Duración del poder arcoíris (ms)
+    const RAINBOW_FADE_DURATION = 500;           // Duración del fade-in del arcoíris (ms)
+
+    // Configuración de la tormenta:
+    let currentStormThreshold = 400;
+    const LIGHTNING_INTERVAL = 3000;
+    const LIGHTNING_DURATION = 300;
+    const GIANT_SPAWN_INTERVAL = 10000;
+    const GIANT_MULTIPLIER = 3.5;                // Escala para nubes gigantes
+    let giantCloudKills = 0;
+
+    // Transición de tormenta:
+    let stormTransitionStart = null;
+    let stormEndingTransitionStart = null;
+    let stormState = "none";       // "none", "active" o "ending"
+    let inStorm = false;           // true si estamos en modo tormenta
+
+    // Efecto atardecer:
+    // Al tocar un pájaro rojo se activa un degradado y se dibuja un sol;
+    // al colisionar con la cortina de lluvia, se aplica el poder: si el protagonista tiene burbuja o arcoíris, la nube se elimina; en caso contrario, el protagonista muere.
+    let sunsetEffect = null; // { startTime, fadeInDuration, fullDuration, fadeOutDuration, sunX, sunY, sunRadius, triggered }
+
+    // ======================= EFECTO DE EVAPORACIÓN (PARTÍCULAS) ====================
+    let evaporationParticles = [];
+    function spawnEvaporationEffect(x, y, radius) {
+      const particleCount = 20;
+      for (let i = 0; i < particleCount; i++) {
+        let angle = Math.random() * 2 * Math.PI;
+        let speed = Math.random() * 1.5 + 0.5;
+        evaporationParticles.push({
+          x: x,
+          y: y,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          radius: radius * (Math.random() * 0.3 + 0.2),
+          startTime: performance.now(),
+          lifetime: 1000 + Math.random() * 400
+        });
+      }
+    }
+    function drawEvaporationParticles(currentTime) {
+      for (let i = evaporationParticles.length - 1; i >= 0; i--) {
+        let p = evaporationParticles[i];
+        let elapsed = currentTime - p.startTime;
+        if (elapsed >= p.lifetime) {
+          evaporationParticles.splice(i, 1);
+          continue;
+        }
+        let alpha = 1 - (elapsed / p.lifetime);
+        p.x += p.vx;
+        p.y += p.vy;
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = "white";
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+
+    // ======================= OTRAS VARIABLES =========================
+    const MOBILE_COLLISION_MULTIPLIER = 0.8;
+    const SCORE_ZONE = { x: 10, y: 10, width: 140, height: 30 };
+    const IS_MOBILE = ('ontouchstart' in window);
+
+    // ======================= CONFIGURACIÓN PARA DASH (SLIDE) =======================
+    const DASH_THRESHOLD = 300;    // Tiempo para detectar doble input en la misma dirección (ms)
+    const DASH_DURATION = 150;     // Duración del dash (ms)
+    const DASH_DISTANCE = 5 * (PROTAGONISTA_RADIUS * 2); // Distancia del dash (5 diámetros)
+    let lastInputDirection = null;
+    let lastInputTime = 0;
+
+    // ======================= CONFIGURACIÓN DEL CANVAS =======================
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    // ======================= VARIABLES DEL JUEGO =======================
+    let score = 0;
+    let lastTime = performance.now();
+    let isPaused = true;
+    let isGameOver = false;
+    let gameStarted = false;
+    let enemySpawnAccumulator = 0;
+    let lightningAccumulator = 0;
+    let giantEnemyAccumulator = 0;
+    let lightningBolts = [];
+    let birdSpawner;
+
+    // ======================= ENTIDADES DEL JUEGO =======================
+    let protagonista = {
+      x: canvas.width / 2,
+      y: canvas.height / 2,
+      vx: PROTAGONISTA_SPEED,
+      vy: 0,
+      rainbow: false,
+      rainbowUntil: 0,
+      bubble: false,
+      isDashing: false,
+      dashRemainingTime: 0,
+      dashVelX: 0,
+      dashVelY: 0
+    };
+    let enemies = [];
+    let birds = [];
+    let rainbowEntity = null;
+
+    // ======================= FUNCIONES DE COLISIÓN =======================
+    function getProtagonistCircles(prot) {
+      return [
+        { x: prot.x - PROTAGONISTA_RADIUS, y: prot.y - PROTAGONISTA_RADIUS, r: PROTAGONISTA_RADIUS },
+        { x: prot.x, y: prot.y - 2 * PROTAGONISTA_RADIUS, r: PROTAGONISTA_RADIUS },
+        { x: prot.x + PROTAGONISTA_RADIUS, y: prot.y - PROTAGONISTA_RADIUS, r: PROTAGONISTA_RADIUS },
+        { x: prot.x, y: prot.y, r: PROTAGONISTA_RADIUS }
+      ];
+    }
+    function getEnemyCircles(enemy) {
+      let baseX = enemy.x - enemy.radius;
+      let baseY = enemy.y - enemy.radius;
+      return [
+        { x: baseX - enemy.radius, y: baseY - enemy.radius, r: enemy.radius },
+        { x: baseX, y: baseY - 2 * enemy.radius, r: enemy.radius },
+        { x: baseX + enemy.radius, y: baseY - enemy.radius, r: enemy.radius },
+        { x: baseX, y: baseY, r: enemy.radius }
+      ];
+    }
+    // Colisión entre círculo y rectángulo
+    function isCircleRectColliding(circle, circleRadius, rect) {
+      let nearestX = Math.max(rect.x, Math.min(circle.x, rect.x + rect.width));
+      let nearestY = Math.max(rect.y, Math.min(circle.y, rect.y + rect.height));
+      let dx = circle.x - nearestX;
+      let dy = circle.y - nearestY;
+      return (dx * dx + dy * dy) < (circleRadius * circleRadius);
+    }
+    function isPreciseCloudCollision(prot, enemy) {
+      const protCircles = getProtagonistCircles(prot);
+      const enemyCircles = getEnemyCircles(enemy);
+      for (let pc of protCircles) {
+        const effectiveProtRadius = IS_MOBILE ? pc.r * MOBILE_COLLISION_MULTIPLIER : pc.r;
+        for (let ec of enemyCircles) {
+          let effectiveEnemyRadius = ec.r;
+          if (enemy.giant) effectiveEnemyRadius *= 0.5;
+          if (Math.hypot(pc.x - ec.x, pc.y - ec.y) < effectiveProtRadius + effectiveEnemyRadius)
+            return true;
+        }
+      }
+      return false;
+    }
+    function isPreciseBirdCollision(prot, bird) {
+      const protCircles = getProtagonistCircles(prot);
+      for (let circle of protCircles) {
+        let dx = circle.x - bird.x;
+        let dy = circle.y - bird.y;
+        if (Math.hypot(dx, dy) < circle.r + BIRD_COLLISION_RADIUS)
+          return true;
+      }
+      return false;
+    }
+    function isCircleRotatedRectColliding(circle, circleRadius, rect) {
+      let centerX = rect.x + rect.width / 2;
+      let centerY = rect.y + rect.height / 2;
+      let dx = circle.x - centerX;
+      let dy = circle.y - centerY;
+      let localX = dx * Math.cos(rect.angle) + dy * Math.sin(rect.angle);
+      let localY = -dx * Math.sin(rect.angle) + dy * Math.cos(rect.angle);
+      let halfWidth = rect.width / 2;
+      let halfHeight = rect.height / 2;
+      let nearestX = Math.max(-halfWidth, Math.min(localX, halfWidth));
+      let nearestY = Math.max(-halfHeight, Math.min(localY, halfHeight));
+      let diffX = localX - nearestX;
+      let diffY = localY - nearestY;
+      return (diffX * diffX + diffY * diffY) < (circleRadius * circleRadius);
+    }
+
+    // ======================= ELEMENTOS DE FONDO =======================
+    let backgroundClouds = [];
+    let backgroundParticles = [];
+    let backgroundLeaves = [];
+    function initBackground() {
+      backgroundClouds = [];
+      backgroundParticles = [];
+      backgroundLeaves = [];
+      for (let i = 0; i < 5; i++) {
+        backgroundClouds.push({
+          x: Math.random() * canvas.width,
+          y: Math.random() * canvas.height,
+          scale: 0.5 + Math.random(),
+          speed: 0.2 + Math.random() * 0.3
+        });
+      }
+      for (let i = 0; i < 20; i++) {
+        backgroundParticles.push({
+          x: Math.random() * canvas.width,
+          y: Math.random() * canvas.height,
+          radius: 1 + Math.random() * 2,
+          speed: 0.1 + Math.random() * 0.2
+        });
+      }
+      for (let i = 0; i < 10; i++) {
+        backgroundLeaves.push({
+          x: Math.random() * canvas.width,
+          y: Math.random() * canvas.height,
+          angle: Math.random() * Math.PI * 2,
+          speed: 0.2 + Math.random() * 0.3
+        });
+      }
+    }
+    initBackground();
+
+    // ======================= GESTIÓN DEL JUEGO =======================
+    function resetGame() {
+      isGameOver = false;
+      isPaused = true;
+      gameStarted = false;
+      inStorm = false;
+      stormState = "none";
+      currentStormThreshold = 400;
+      giantCloudKills = 0;
+      stormTransitionStart = null;
+      stormEndingTransitionStart = null;
+      protagonista.x = canvas.width / 2;
+      protagonista.y = canvas.height / 2;
+      protagonista.vx = PROTAGONISTA_SPEED;
+      protagonista.vy = 0;
+      protagonista.rainbow = false;
+      protagonista.rainbowUntil = 0;
+      protagonista.bubble = false;
+      protagonista.isDashing = false;
+      protagonista.dashRemainingTime = 0;
+      protagonista.dashVelX = 0;
+      protagonista.dashVelY = 0;
+      score = 0;
+      enemies = [];
+      birds = [];
+      rainbowEntity = null;
+      enemySpawnAccumulator = 0;
+      lightningBolts = [];
+      lightningAccumulator = 0;
+      giantEnemyAccumulator = 0;
+      sunsetEffect = null;
+      evaporationParticles = [];
+      lastTime = performance.now();
+      clearInterval(birdSpawner);
+      birdSpawner = setInterval(spawnBird, BIRD_SPAWN_INTERVAL);
+    }
+    function spawnEnemy() {
+      let side = Math.floor(Math.random() * 4);
+      let x, y, angle;
+      if (side === 0) {
+        x = -ENEMY_RADIUS;
+        y = Math.random() * canvas.height;
+      } else if (side === 1) {
+        x = canvas.width + ENEMY_RADIUS;
+        y = Math.random() * canvas.height;
+      } else if (side === 2) {
+        x = Math.random() * canvas.width;
+        y = -ENEMY_RADIUS;
+      } else {
+        x = Math.random() * canvas.width;
+        y = canvas.height + ENEMY_RADIUS;
+      }
+      angle = Math.atan2((canvas.height / 2 - y), (canvas.width / 2 - x));
+      angle += (Math.random() - 0.5) * 0.4;
+      let vx = Math.cos(angle) * ENEMY_SPEED;
+      let vy = Math.sin(angle) * ENEMY_SPEED;
+      let enemy = { x: x, y: y, vx: vx, vy: vy, radius: ENEMY_RADIUS, giant: false };
+      // Probabilidad del 20% de tener cortina de lluvia.
+      enemy.rainCurtain = (Math.random() < 0.2);
+      if (enemy.rainCurtain) {
+        enemy.radius *= 2; // La nube con lluvia es el doble de grande.
+      }
+      enemies.push(enemy);
+    }
+    function spawnGiantEnemy() {
+      let side = Math.floor(Math.random() * 4);
+      let x, y, angle;
+      let giantRadius = ENEMY_RADIUS * GIANT_MULTIPLIER;
+      if (side === 0) {
+        x = -giantRadius;
+        y = Math.random() * canvas.height;
+      } else if (side === 1) {
+        x = canvas.width + giantRadius;
+        y = Math.random() * canvas.height;
+      } else if (side === 2) {
+        x = Math.random() * canvas.width;
+        y = -giantRadius;
+      } else {
+        x = Math.random() * canvas.width;
+        y = canvas.height + giantRadius;
+      }
+      angle = Math.atan2((canvas.height / 2 - y), (canvas.width / 2 - x));
+      angle += (Math.random() - 0.5) * 0.4;
+      let vx = Math.cos(angle) * ENEMY_SPEED;
+      let vy = Math.sin(angle) * ENEMY_SPEED;
+      let enemy = { x: x, y: y, vx: vx, vy: vy, radius: giantRadius, giant: true };
+      enemy.rainCurtain = (Math.random() < 0.2);
+      if (enemy.rainCurtain) {
+        enemy.radius *= 2;
+      }
+      enemies.push(enemy);
+    }
+    // ======================= GESTIÓN DE LOS PÁJAROS =======================
+    // Tres tipos: normal (50% → otorga burbuja), arcoíris (30% → efecto arcoíris) y rojo (20% → atardecer).
+    function spawnBird() {
+      const x = -30;
+      const y = Math.random() * canvas.height;
+      const BIRD_SPEED = 6;
+      let r = Math.random();
+      let birdType, birdColor;
+      if (r < 0.5) {
+        birdType = "normal";
+        birdColor = "gray";
+      } else if (r < 0.8) {
+        birdType = "rainbow";
+        birdColor = "rainbow";
+      } else {
+        birdType = "red";
+        birdColor = "red";
+      }
+      birds.push({ x: x, y: y, vx: BIRD_SPEED, vy: 0, type: birdType, color: birdColor });
+    }
+    function updatePosition(obj, radius, dtFactor) {
+      obj.x += obj.vx * dtFactor;
+      obj.y += obj.vy * dtFactor;
+      if (obj.x < -radius) obj.x = canvas.width + radius;
+      if (obj.x > canvas.width + radius) obj.x = -radius;
+      if (obj.y < -radius) obj.y = canvas.height + radius;
+      if (obj.y > canvas.height + radius) obj.y = -radius;
+    }
+    // Actualiza la posición del protagonista considerando el dash.
+    function updateProtagonistPosition(dt, dtFactor) {
+      if (protagonista.isDashing) {
+        protagonista.x += protagonista.dashVelX * dt;
+        protagonista.y += protagonista.dashVelY * dt;
+        protagonista.dashRemainingTime -= dt;
+        if (protagonista.dashRemainingTime <= 0) {
+          protagonista.isDashing = false;
+        }
+        if (protagonista.x < -PROTAGONISTA_RADIUS) protagonista.x = canvas.width + PROTAGONISTA_RADIUS;
+        if (protagonista.x > canvas.width + PROTAGONISTA_RADIUS) protagonista.x = -PROTAGONISTA_RADIUS;
+        if (protagonista.y < -PROTAGONISTA_RADIUS) protagonista.y = canvas.height + PROTAGONISTA_RADIUS;
+        if (protagonista.y > canvas.height + PROTAGONISTA_RADIUS) protagonista.y = -PROTAGONISTA_RADIUS;
+      } else {
+        updatePosition(protagonista, PROTAGONISTA_RADIUS, dtFactor);
+      }
+    }
+    // Dibuja la cortina de lluvia: 4 líneas discontinuas, centradas horizontalmente debajo de la nube.
+    function drawRainCurtain(enemy, currentTime) {
+      const totalWidth = 3 * enemy.radius;
+      const centerX = enemy.x;
+      const startX = centerX - (totalWidth / 2);
+      const lineCount = 4;
+      ctx.save();
+      ctx.setLineDash([4, 4]);  // Líneas discontinuas
+      ctx.strokeStyle = "white";
+      ctx.lineWidth = 1;
+      const startY = enemy.y + enemy.radius;
+      for (let i = 0; i < lineCount; i++) {
+        let lineX = startX + (i + 0.5) * (totalWidth / lineCount);
+        let offset = (currentTime / 50) % 10;
+        ctx.beginPath();
+        ctx.moveTo(lineX, startY + offset);
+        ctx.lineTo(lineX, canvas.height);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+    // ======================= DIBUJO =======================
+    function drawBackground(currentTime) {
+      backgroundClouds.forEach(cloud => {
+        ctx.save();
+        ctx.globalAlpha = 0.5;
+        ctx.fillStyle = "#ADD8E6";
+        let r = 20 * cloud.scale;
+        ctx.beginPath();
+        ctx.arc(cloud.x - r, cloud.y - r, r, Math.PI * 0.5, Math.PI * 1.5);
+        ctx.arc(cloud.x, cloud.y - 2 * r, r, Math.PI, Math.PI * 2);
+        ctx.arc(cloud.x + r, cloud.y - r, r, Math.PI * 1.5, Math.PI * 0.5);
+        ctx.arc(cloud.x, cloud.y, r, 0, Math.PI);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      });
+      backgroundParticles.forEach(p => {
+        ctx.save();
+        ctx.globalAlpha = 0.7;
+        ctx.fillStyle = "white";
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      });
+      backgroundLeaves.forEach(leaf => {
+        ctx.save();
+        ctx.translate(leaf.x, leaf.y);
+        ctx.rotate(leaf.angle);
+        ctx.globalAlpha = 0.7;
+        ctx.fillStyle = "green";
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 5, 10, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      });
+      if (sunsetEffect) {
+        let elapsed = currentTime - sunsetEffect.startTime;
+        let totalEffectTime = sunsetEffect.fadeInDuration + sunsetEffect.fullDuration + sunsetEffect.fadeOutDuration;
+        let alpha = 0;
+        if (elapsed < sunsetEffect.fadeInDuration) {
+          alpha = elapsed / sunsetEffect.fadeInDuration;
+        } else if (elapsed < sunsetEffect.fadeInDuration + sunsetEffect.fullDuration) {
+          alpha = 1;
+        } else if (elapsed < totalEffectTime) {
+          alpha = 1 - ((elapsed - sunsetEffect.fadeInDuration - sunsetEffect.fullDuration) / sunsetEffect.fadeOutDuration);
+        }
+        let grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        grad.addColorStop(0, "violet");
+        grad.addColorStop(1, "orange");
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.restore();
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = "orange";
+        ctx.beginPath();
+        ctx.arc(sunsetEffect.sunX, sunsetEffect.sunY, sunsetEffect.sunRadius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+      if (inStorm) {
+        ctx.save();
+        let overlayAlpha = 0;
+        if (stormState === "active") {
+          let progress = Math.min((currentTime - stormTransitionStart) / 5000, 1);
+          overlayAlpha = progress * 0.3;
+        } else if (stormState === "ending") {
+          let endingProgress = Math.min((currentTime - stormEndingTransitionStart) / 5000, 1);
+          overlayAlpha = (1 - endingProgress) * 0.3;
+        }
+        ctx.fillStyle = "rgba(0,0,0," + overlayAlpha + ")";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.restore();
+      }
+      if (inStorm) {
+        lightningBolts.forEach(bolt => {
+          drawLightning(bolt);
+        });
+      }
+      drawEvaporationParticles(currentTime);
+    }
+    function updateBackground(dtFactor) {
+      backgroundClouds.forEach(cloud => {
+        cloud.x += cloud.speed * dtFactor;
+        if (cloud.x - 40 * cloud.scale > canvas.width) cloud.x = -40 * cloud.scale;
+      });
+      backgroundParticles.forEach(p => {
+        p.x += p.speed * dtFactor;
+        if (p.x - p.radius > canvas.width) p.x = -p.radius;
+      });
+      backgroundLeaves.forEach(leaf => {
+        leaf.x += leaf.speed * dtFactor;
+        leaf.angle += 0.01 * dtFactor;
+        if (leaf.x > canvas.width + 10) leaf.x = -10;
+      });
+    }
+    function drawCloud(x, y, radius, color) {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(x, y, radius, Math.PI * 0.5, Math.PI * 1.5);
+      ctx.arc(x + radius, y - radius, radius, Math.PI, Math.PI * 2);
+      ctx.arc(x + radius * 2, y, radius, Math.PI * 1.5, Math.PI * 0.5);
+      ctx.arc(x + radius, y + radius, radius, 0, Math.PI);
+      ctx.closePath();
+      ctx.fill();
+    }
+    function drawBird(bird, currentTime) {
+      ctx.save();
+      ctx.translate(bird.x, bird.y);
+      if (bird.type === "rainbow") {
+        let gradient = ctx.createLinearGradient(-15, 0, 15, 0);
+        gradient.addColorStop(0, "red");
+        gradient.addColorStop(0.16, "orange");
+        gradient.addColorStop(0.33, "yellow");
+        gradient.addColorStop(0.5, "green");
+        gradient.addColorStop(0.66, "blue");
+        gradient.addColorStop(0.83, "indigo");
+        gradient.addColorStop(1, "violet");
+        ctx.fillStyle = gradient;
+      } else {
+        ctx.fillStyle = bird.color;
+      }
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 15, 7, 0, 0, Math.PI * 2);
+      ctx.fill();
+      let wingOffset = Math.sin(currentTime / 200) * 5;
+      ctx.fillStyle = (bird.type === "red") ? "darkred" : "darkgray";
+      ctx.beginPath();
+      ctx.ellipse(-5, -7 + wingOffset, 8, 4, -0.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(-5, 7 + wingOffset, 8, 4, 0.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+    function drawRainbow(rainbow, currentTime) {
+      let progress = Math.min((currentTime - rainbow.spawnTime) / rainbow.fadeDuration, 1);
+      ctx.save();
+      ctx.globalAlpha = progress;
+      let centerX = rainbow.x + rainbow.width / 2;
+      let centerY = rainbow.y + rainbow.height / 2;
+      ctx.translate(centerX, centerY);
+      ctx.rotate(rainbow.angle);
+      let colors = ["red", "orange", "yellow", "green", "blue", "indigo", "violet"];
+      let bandHeight = rainbow.height / colors.length;
+      let startY = -rainbow.height / 2;
+      for (let i = 0; i < colors.length; i++) {
+        ctx.fillStyle = colors[i];
+        ctx.fillRect(-rainbow.width / 2, startY, rainbow.width, bandHeight);
+        startY += bandHeight;
+      }
+      ctx.restore();
+    }
+    function drawProtagonist(currentTime) {
+      ctx.save();
+      let x = protagonista.x, y = protagonista.y, radius = PROTAGONISTA_RADIUS;
+      ctx.beginPath();
+      ctx.arc(x - radius, y - radius, radius, Math.PI * 0.5, Math.PI * 1.5);
+      ctx.arc(x, y - 2 * radius, radius, Math.PI, Math.PI * 2);
+      ctx.arc(x + radius, y - radius, radius, Math.PI * 1.5, Math.PI * 0.5);
+      ctx.arc(x, y, radius, 0, Math.PI);
+      ctx.closePath();
+      if (protagonista.rainbow) {
+        let grad = ctx.createLinearGradient(x - radius, y - 2 * radius, x + radius, y);
+        grad.addColorStop(0, "red");
+        grad.addColorStop(0.16, "orange");
+        grad.addColorStop(0.33, "yellow");
+        grad.addColorStop(0.5, "green");
+        grad.addColorStop(0.66, "blue");
+        grad.addColorStop(0.83, "indigo");
+        grad.addColorStop(1, "violet");
+        ctx.fillStyle = grad;
+      } else {
+        ctx.fillStyle = "white";
+      }
+      ctx.fill();
+      let eyeRadius = radius * 0.15;
+      let eyeOffsetX = radius * 0.5;
+      let eyeOffsetY = radius * 0.3;
+      ctx.beginPath();
+      ctx.arc(x - eyeOffsetX, y - eyeOffsetY, eyeRadius, 0, Math.PI * 2);
+      ctx.fillStyle = "black";
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(x + eyeOffsetX, y - eyeOffsetY, eyeRadius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      if (isGameOver) {
+        ctx.arc(x, y + radius * 0.8, radius * 0.6, 0, Math.PI, true);
+      } else if (protagonista.rainbow) {
+        ctx.arc(x, y + radius * 0.2, radius * 0.6, 0, Math.PI, false);
+      } else {
+        ctx.moveTo(x - radius * 0.6, y + radius * 0.4);
+        ctx.lineTo(x + radius * 0.6, y + radius * 0.4);
+      }
+      ctx.strokeStyle = "black";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      if (sunsetEffect) {
+        ctx.save();
+        ctx.fillStyle = "black";
+        ctx.fillRect(x - eyeOffsetX - eyeRadius, y - eyeOffsetY - eyeRadius/2, eyeRadius*2, eyeRadius);
+        ctx.fillRect(x + eyeOffsetX - eyeRadius, y - eyeOffsetY - eyeRadius/2, eyeRadius*2, eyeRadius);
+        ctx.restore();
+      }
+      // Dibujar la burbuja elevada (se resta 10 al eje Y)
+      if (protagonista.bubble) {
+        ctx.save();
+        ctx.lineWidth = 4;
+        ctx.fillStyle = "rgba(173,216,230,0.2)";
+        ctx.strokeStyle = "rgba(173,216,230,0.6)";
+        ctx.beginPath();
+        ctx.arc(x, y - 10, PROTAGONISTA_RADIUS + BUBBLE_EXTRA_RADIUS, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      }
+      ctx.restore();
+    }
+    function drawScore() {
+      ctx.fillStyle = "black";
+      ctx.font = "20px Arial";
+      ctx.fillText("Score: " + Math.floor(score), SCORE_ZONE.x, SCORE_ZONE.y + 20);
+    }
+    function drawLightning(bolt) {
+      let t = performance.now();
+      if (t - bolt.spawnTime > bolt.duration) return;
+      ctx.save();
+      ctx.strokeStyle = "rgba(255,255,255,0.8)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      let startX = bolt.x;
+      ctx.moveTo(startX, 0);
+      let segments = 10;
+      let segmentHeight = canvas.height / segments;
+      for (let i = 1; i <= segments; i++) {
+        let offsetX = (Math.random() - 0.5) * 30;
+        ctx.lineTo(startX + offsetX, i * segmentHeight);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+    function drawAngryFace(centerX, centerY, radius) {
+      ctx.save();
+      const eyeOffsetX = radius * 0.4;
+      const eyeOffsetY = radius * 0.3;
+      const eyeRadius = radius * 0.15;
+      ctx.beginPath();
+      ctx.arc(centerX - eyeOffsetX, centerY - eyeOffsetY, eyeRadius, 0, Math.PI * 2);
+      ctx.fillStyle = "white";
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(centerX + eyeOffsetX, centerY - eyeOffsetY, eyeRadius, 0, Math.PI * 2);
+      ctx.fillStyle = "white";
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(centerX - eyeOffsetX + 2, centerY - eyeOffsetY, eyeRadius * 0.5, 0, Math.PI * 2);
+      ctx.fillStyle = "black";
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(centerX + eyeOffsetX + 2, centerY - eyeOffsetY, eyeRadius * 0.5, 0, Math.PI * 2);
+      ctx.fillStyle = "black";
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(centerX - eyeOffsetX - eyeRadius, centerY - eyeOffsetY - eyeRadius);
+      ctx.lineTo(centerX - eyeOffsetX + eyeRadius, centerY - eyeOffsetY - eyeRadius * 1.5);
+      ctx.strokeStyle = "black";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(centerX + eyeOffsetX - eyeRadius, centerY - eyeOffsetY - eyeRadius * 1.5);
+      ctx.lineTo(centerX + eyeOffsetX + eyeRadius, centerY - eyeOffsetY - eyeRadius);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(centerX, centerY + radius * 0.2, radius * 0.4, 0, Math.PI, true);
+      ctx.stroke();
+      ctx.restore();
+    }
+    // ======================= DIBUJO DE LA CORTINA DE LLUVIA =======================
+    function drawRainCurtain(enemy, currentTime) {
+      const totalWidth = 3 * enemy.radius;
+      const centerX = enemy.x;
+      const startX = centerX - (totalWidth / 2);
+      const lineCount = 4; // Ahora 4 líneas centradas
+      ctx.save();
+      ctx.setLineDash([4, 4]);  // Líneas discontinuas
+      ctx.strokeStyle = "white";
+      ctx.lineWidth = 1;
+      const startY = enemy.y + enemy.radius;
+      for (let i = 0; i < lineCount; i++) {
+        let lineX = startX + (i + 0.5) * (totalWidth / lineCount);
+        let offset = (currentTime / 50) % 10;
+        ctx.beginPath();
+        ctx.moveTo(lineX, startY + offset);
+        ctx.lineTo(lineX, canvas.height);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+    // ======================= CONTROLES =======================
+    document.addEventListener('keydown', function(e) {
+      if (!gameStarted && (e.key === "ArrowUp" || e.key === "ArrowDown" ||
+          e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+        gameStarted = true;
+        isPaused = false;
+      }
+      if (e.code === "Space") {
+        togglePause();
+        return;
+      }
+      if (!isPaused && !isGameOver) {
+        let direction = null;
+        switch(e.key) {
+          case 'ArrowUp': direction = { x: 0, y: -1 }; break;
+          case 'ArrowDown': direction = { x: 0, y: 1 }; break;
+          case 'ArrowLeft': direction = { x: -1, y: 0 }; break;
+          case 'ArrowRight': direction = { x: 1, y: 0 }; break;
+        }
+        if (direction) {
+          let now = performance.now();
+          if (lastInputDirection &&
+              lastInputDirection.x === direction.x &&
+              lastInputDirection.y === direction.y &&
+              (now - lastInputTime) < DASH_THRESHOLD &&
+              !protagonista.isDashing) {
+            protagonista.isDashing = true;
+            protagonista.dashRemainingTime = DASH_DURATION;
+            const dashVelocity = DASH_DISTANCE / DASH_DURATION;
+            protagonista.dashVelX = direction.x * dashVelocity;
+            protagonista.dashVelY = direction.y * dashVelocity;
+          } else {
+            protagonista.vx = direction.x * PROTAGONISTA_SPEED;
+            protagonista.vy = direction.y * PROTAGONISTA_SPEED;
+          }
+          lastInputDirection = direction;
+          lastInputTime = now;
+        }
+      }
+    });
+    let touchStartX = null, touchStartY = null;
+    const swipeThreshold = 30;
+    canvas.addEventListener('touchstart', function(e) {
+      const touch = e.changedTouches[0];
+      touchStartX = touch.screenX;
+      touchStartY = touch.screenY;
+    }, false);
+    canvas.addEventListener('touchend', function(e) {
+      if (IS_MOBILE && isGameOver) {
+        resetGame();
+        return;
+      }
+      if (!gameStarted) {
+        gameStarted = true;
+        isPaused = false;
+      }
+      if (touchStartX === null || touchStartY === null) return;
+      const touch = e.changedTouches[0];
+      const deltaX = touch.screenX - touchStartX;
+      const deltaY = touch.screenY - touchStartY;
+      touchStartX = null;
+      touchStartY = null;
+      let rect = canvas.getBoundingClientRect();
+      let x = touch.clientX - rect.left;
+      let y = touch.clientY - rect.top;
+      if (Math.abs(deltaX) < swipeThreshold && Math.abs(deltaY) < swipeThreshold) {
+        if (x >= SCORE_ZONE.x && x <= SCORE_ZONE.x + SCORE_ZONE.width &&
+            y >= SCORE_ZONE.y && y <= SCORE_ZONE.y + SCORE_ZONE.height) {
+          togglePause();
+        }
+        return;
+      }
+      let direction = null;
+      if (Math.abs(deltaX) > Math.abs(deltaY)) {
+        direction = (deltaX > 0) ? { x: 1, y: 0 } : { x: -1, y: 0 };
+      } else {
+        direction = (deltaY > 0) ? { x: 0, y: 1 } : { x: 0, y: -1 };
+      }
+      if (direction) {
+        let now = performance.now();
+        if (lastInputDirection &&
+            lastInputDirection.x === direction.x &&
+            lastInputDirection.y === direction.y &&
+            (now - lastInputTime) < DASH_THRESHOLD &&
+            !protagonista.isDashing) {
+          protagonista.isDashing = true;
+          protagonista.dashRemainingTime = DASH_DURATION;
+          const dashVelocity = DASH_DISTANCE / DASH_DURATION;
+          protagonista.dashVelX = direction.x * dashVelocity;
+          protagonista.dashVelY = direction.y * dashVelocity;
+        } else {
+          protagonista.vx = direction.x * PROTAGONISTA_SPEED;
+          protagonista.vy = direction.y * PROTAGONISTA_SPEED;
+        }
+        lastInputDirection = direction;
+        lastInputTime = now;
+      }
+    }, false);
+    canvas.addEventListener('click', function(e) {
+      if (!IS_MOBILE) {
+        if (!gameStarted) {
+          gameStarted = true;
+          isPaused = false;
+        } else {
+          togglePause();
+        }
+      }
+    });
+
+    // ======================= PAUSA Y REINICIO =======================
+    function togglePause() {
+      if (isGameOver) {
+        resetGame();
+      } else {
+        isPaused = !isPaused;
+      }
+    }
+    function beginStormEnding(currentTime) {
+      if (stormState !== "ending") {
+        stormState = "ending";
+        stormEndingTransitionStart = currentTime;
+      }
+    }
+
+    // ======================= BUCLE PRINCIPAL DEL JUEGO =======================
+    function gameLoop(currentTime) {
+      let dt = currentTime - lastTime;
+      let dtFactor = dt / 16.67;
+      lastTime = currentTime;
+      
+      if (!gameStarted) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        drawBackground(currentTime);
+        drawProtagonist(currentTime);
+        drawScore();
+        requestAnimationFrame(gameLoop);
+        return;
+      }
+      
+      if (sunsetEffect) {
+        let elapsed = currentTime - sunsetEffect.startTime;
+        let totalEffectTime = sunsetEffect.fadeInDuration + sunsetEffect.fullDuration + sunsetEffect.fadeOutDuration;
+        if (elapsed >= totalEffectTime) {
+          sunsetEffect = null;
+        }
+      }
+      if (sunsetEffect) {
+        let dx = protagonista.x - sunsetEffect.sunX;
+        let dy = protagonista.y - sunsetEffect.sunY;
+        if (Math.hypot(dx, dy) < PROTAGONISTA_RADIUS + sunsetEffect.sunRadius) {
+          if (!sunsetEffect.triggered) {
+            while (enemies.length > 0) {
+              let enemy = enemies.shift();
+              spawnEvaporationEffect(enemy.x, enemy.y, enemy.radius);
+            }
+            sunsetEffect.triggered = true;
+          }
+        }
+      }
+      
+      if (!isPaused && !isGameOver) {
+        score += dtFactor * 0.1;
+        updateBackground(dtFactor);
+        updateProtagonistPosition(dt, dtFactor);
+        if (protagonista.rainbow && currentTime > protagonista.rainbowUntil) {
+          protagonista.rainbow = false;
+        }
+        enemies.forEach(enemy => {
+          updatePosition(enemy, enemy.radius, dtFactor);
+        });
+        for (let i = birds.length - 1; i >= 0; i--) {
+          let bird = birds[i];
+          bird.x += bird.vx * dtFactor;
+          bird.y += bird.vy * dtFactor;
+          if (bird.x > canvas.width + 30) {
+            birds.splice(i, 1);
+          }
+        }
+        let enemyInterval = (BASE_ENEMY_INTERVAL * ENEMY_SPAWN_INTERVAL_FACTOR) - Math.floor(score / 100) * 1000;
+        enemyInterval = Math.max(200, enemyInterval);
+        enemySpawnAccumulator += dt;
+        if (enemySpawnAccumulator >= enemyInterval) {
+          spawnEnemy();
+          enemySpawnAccumulator -= enemyInterval;
+        }
+        if (score >= currentStormThreshold && !inStorm && stormState === "none") {
+          inStorm = true;
+          stormState = "active";
+          stormTransitionStart = currentTime;
+          giantEnemyAccumulator = 0;
+          if (enemies.filter(e => e.giant).length < 3) {
+            spawnGiantEnemy();
+          }
+        }
+        if (inStorm) {
+          lightningAccumulator += dt;
+          if (lightningAccumulator >= LIGHTNING_INTERVAL) {
+            lightningBolts.push({ spawnTime: currentTime, duration: LIGHTNING_DURATION, x: Math.random() * canvas.width });
+            lightningAccumulator = 0;
+          }
+          lightningBolts = lightningBolts.filter(bolt => currentTime - bolt.spawnTime < bolt.duration);
+          giantEnemyAccumulator += dt;
+          if (giantEnemyAccumulator >= GIANT_SPAWN_INTERVAL) {
+            if (enemies.filter(e => e.giant).length < 3) {
+              spawnGiantEnemy();
+            }
+            giantEnemyAccumulator -= GIANT_SPAWN_INTERVAL;
+          }
+        }
+      }
+      
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawBackground(currentTime);
+      drawProtagonist(currentTime);
+      
+      // Procesar nubes negras y su cortina de lluvia
+      for (let i = enemies.length - 1; i >= 0; i--) {
+        let enemy = enemies[i];
+        drawCloud(enemy.x - enemy.radius, enemy.y - enemy.radius, enemy.radius, "black");
+        if (enemy.giant) {
+          drawAngryFace(enemy.x, enemy.y, enemy.radius);
+        }
+        // Si la nube tiene cortina de lluvia, dibujar la cortina
+        if (enemy.rainCurtain) {
+          drawRainCurtain(enemy, currentTime);
+          const rect = {
+            x: enemy.x - enemy.radius,
+            y: enemy.y + enemy.radius,
+            width: 3 * enemy.radius,
+            height: canvas.height - (enemy.y + enemy.radius)
+          };
+          if (isCircleRectColliding(protagonista, PROTAGONISTA_RADIUS, rect)) {
+            if (protagonista.rainbow || protagonista.bubble) {
+              spawnEvaporationEffect(enemy.x, enemy.y, enemy.radius);
+              if (enemy.giant) {
+                giantCloudKills++;
+                let requiredKills = (currentStormThreshold === 800) ? 6 : 3;
+                if (giantCloudKills >= requiredKills) {
+                  beginStormEnding(currentTime);
+                }
+              }
+              if (protagonista.bubble) {
+                protagonista.bubble = false;
+              }
+              enemies.splice(i, 1);
+            } else {
+              isGameOver = true;
+            }
+          }
+        }
+        if (!isPaused && !isGameOver && isPreciseCloudCollision(protagonista, enemy)) {
+          if (protagonista.rainbow || protagonista.bubble) {
+            spawnEvaporationEffect(enemy.x, enemy.y, enemy.radius);
+            if (enemy.giant) {
+              giantCloudKills++;
+              let requiredKills = (currentStormThreshold === 800) ? 6 : 3;
+              if (giantCloudKills >= requiredKills) {
+                beginStormEnding(currentTime);
+              }
+            }
+            if (protagonista.bubble) {
+              protagonista.bubble = false;
+            }
+            enemies.splice(i, 1);
+          } else {
+            isGameOver = true;
+          }
+        }
+      }
+      
+      // Procesar pájaros
+      for (let i = birds.length - 1; i >= 0; i--) {
+        let bird = birds[i];
+        drawBird(bird, currentTime);
+        if (!isPaused && !isGameOver && isPreciseBirdCollision(protagonista, bird)) {
+          birds.splice(i, 1);
+          switch(bird.type) {
+            case "red":
+              sunsetEffect = {
+                startTime: currentTime,
+                fadeInDuration: 2000,
+                fullDuration: 5000,
+                fadeOutDuration: 2000,
+                sunX: Math.random() * canvas.width,
+                sunY: Math.random() * canvas.height,
+                sunRadius: 50,
+                triggered: false
+              };
+              break;
+            case "rainbow":
+              rainbowEntity = {
+                spawnTime: currentTime,
+                fadeDuration: RAINBOW_FADE_DURATION,
+                duration: RAINBOW_DURATION,
+                x: -canvas.width / 2,
+                y: Math.random() * (canvas.height - 100),
+                width: canvas.width * 2,
+                height: 100,
+                angle: Math.random() * Math.PI * 2
+              };
+              break;
+            case "normal":
+            default:
+              protagonista.bubble = true;
+              break;
+          }
+        }
+      }
+      
+      if (rainbowEntity) {
+        if (currentTime - rainbowEntity.spawnTime > rainbowEntity.duration) {
+          rainbowEntity = null;
+        } else {
+          if (currentTime - rainbowEntity.spawnTime >= rainbowEntity.fadeDuration) {
+            if (!isPaused && !isGameOver && isCircleRotatedRectColliding(protagonista, PROTAGONISTA_RADIUS, rainbowEntity)) {
+              protagonista.rainbow = true;
+              protagonista.rainbowUntil = currentTime + RAINBOW_MODE_DURATION;
+              rainbowEntity = null;
+            }
+          }
+          if (rainbowEntity) {
+            drawRainbow(rainbowEntity, currentTime);
+          }
+        }
+      }
+      
+      drawEvaporationParticles(currentTime);
+      drawScore();
+      if (isGameOver) {
+        ctx.fillStyle = "rgba(0,0,0,0.5)";
+        ctx.font = "40px Arial";
+        ctx.fillText("GAME OVER", canvas.width / 2 - 100, canvas.height / 2);
+      } else if (isPaused) {
+        ctx.fillStyle = "rgba(0,0,0,0.5)";
+        ctx.font = "40px Arial";
+        ctx.fillText("PAUSE", canvas.width / 2 - 50, canvas.height / 2);
+      }
+      requestAnimationFrame(gameLoop);
+    }
+    spawnEnemy();
+    birdSpawner = setInterval(spawnBird, BIRD_SPAWN_INTERVAL);
+    requestAnimationFrame(gameLoop);
+  </script>
+</body>
+</html>

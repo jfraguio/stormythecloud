@@ -22,9 +22,9 @@
     // ======================================================
     // Declaración de variables globales críticas
     let groundGrass = []; // Se usará para almacenar las propiedades de la hierba precalculada
+    let stars = [];       // Array para almacenar la posición única de las estrellas
 
     // ======================= CONFIGURACIÓN GENERAL =========================
-    // Parámetros ajustables para enemigos y otras mecánicas.
     const PROB_ENEMY_GIANT = 0.1;
     const PROB_ENEMY_FOLLOWER = 0.1;
     const PROB_ENEMY_RAIN = 0.1;
@@ -41,7 +41,8 @@
     const PROTAGONISTA_RADIUS = 16;
     const ENEMY_RADIUS = 16;
     const BIRD_COLLISION_RADIUS = 15;
-    const BIRD_SPAWN_INTERVAL = 5000;
+    const BIRD_SPAWN_INTERVAL = 5000;  // Se crea un pájaro cada 5 segundos.
+    // Los pájaros se generan en un nivel aleatorio y desaparecen al salir por el lado derecho.
     const RAINBOW_DURATION = 3000;
     const RAINBOW_MODE_DURATION = 5000;
     const RAINBOW_FADE_DURATION = 500;
@@ -81,7 +82,8 @@
     function resizeCanvas() {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
-      initGroundGrass(); // Se recalcula la hierba al redimensionar
+      initGroundGrass(); // Recalcula la hierba al redimensionar
+      initStars();       // Recalcula las posiciones de las estrellas
     }
     window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
@@ -89,12 +91,30 @@
     // ======================= FUNCIONES PARA INICIALIZAR LA HIERBA (GROUND GRASS) =======================
     function initGroundGrass() {
       groundGrass = [];
-      let bladeSpacing = 5;  // Espaciado reducido para mayor densidad
+      let bladeSpacing = 5;
       let grassCount = Math.floor(canvas.width / bladeSpacing);
       for (let i = 0; i < grassCount; i++) {
         let baseX = i * bladeSpacing + Math.random() * (bladeSpacing * 0.5);
-        let bladeHeight = 5 + Math.random() * 20; // Altura variable entre 5 y 25 píxeles
+        let bladeHeight = 5 + Math.random() * 20;
         groundGrass.push({ baseX: baseX, bladeHeight: bladeHeight });
+      }
+    }
+
+    // ======================= FUNCIONES PARA INICIALIZAR LAS ESTRELLAS =======================
+    function initStars() {
+      stars = [];
+      const starCount = 20;
+      for (let i = 0; i < starCount; i++) {
+        let starX = Math.random() * canvas.width;
+        let starY = Math.random() * (canvas.height / 2);
+        stars.push({
+          x: starX,
+          y: starY,
+          radius: 1 + Math.random() * 1.5,
+          phase: Math.random() * Math.PI * 2,    // ← Fase aleatoria
+          speed: 0.002 + Math.random() * 0.002,  // ← Velocidad distinta por estrella
+          amplitude: 0.4 + Math.random() * 0.6   // ← Qué tanto oscila su brillo
+        });
       }
     }
 
@@ -358,6 +378,49 @@
     }
     initBackground();
 
+    // ======================= FUNCIONES DE DIBUJO DE LA NUEVA CUADRÍCULA =======================
+    function drawBirdGrid() {
+      // Posicionar la cuadrícula justo debajo del score.
+      const gridX = SCORE_ZONE.x;
+      const gridY = SCORE_ZONE.y + 30;  // 10 + 20 (score) + margen
+      const cellSize = 30;
+      const cellMargin = 5;
+      // Se asume una cuadrícula de 3 celdas (niveles 0, 1 y 2)
+      for (let i = 0; i < 3; i++) {
+        let x = gridX + i * (cellSize + cellMargin);
+        // Resaltar la celda del nivel actual del protagonista.
+        if (protagonista.level === i) {
+          ctx.strokeStyle = "green";
+          ctx.lineWidth = 3;
+        } else {
+          ctx.strokeStyle = "black";
+          ctx.lineWidth = 1;
+        }
+        ctx.strokeRect(x, gridY, cellSize, cellSize);
+        // Si existe un pájaro en el nivel 'i', se dibuja un punto en la celda.
+        let bird = birds.find(b => b.level === i);
+        if (bird) {
+          let dotColor;
+          if (bird.type === "red") {
+            dotColor = "red";
+          } else if (bird.type === "normal") {
+            dotColor = "gray";
+          } else if (bird.type === "rainbow") {
+            dotColor = "violet";
+          } else {
+            dotColor = "black";
+          }
+          let cx = x + cellSize / 2;
+          let cy = gridY + cellSize / 2;
+          let dotRadius = 5;
+          ctx.beginPath();
+          ctx.arc(cx, cy, dotRadius, 0, Math.PI * 2);
+          ctx.fillStyle = dotColor;
+          ctx.fill();
+        }
+      }
+    }
+
     // ======================= ACTUALIZACIÓN DE POSICIONES =======================
     function updatePosition(obj, radius, dtFactor) {
       obj.x += obj.vx * dtFactor;
@@ -365,6 +428,14 @@
       if (obj.x < -radius) obj.x = canvas.width + radius;
       if (obj.x > canvas.width + radius) obj.x = -radius;
       
+      // Si el objeto tiene fixedLevel (pájaros y efectos) se usa wrapping vertical sin cambio de nivel.
+      if (obj.fixedLevel) {
+        if (obj.y < -radius) obj.y = canvas.height + radius;
+        if (obj.y > canvas.height + radius) obj.y = -radius;
+        return;
+      }
+      
+      // Para la nube blanca y enemigos (nubes que pueden cambiar de nivel) se aplica el wrapping vertical.
       if (typeof obj.level === "number") {
         if (obj.y < -radius) {
           if (obj.level === 0) {
@@ -405,8 +476,7 @@
       } else {
         updatePosition(protagonista, PROTAGONISTA_RADIUS, dtFactor);
       }
-      
-      // Evitar que la nube descienda más allá del suelo en nivel 0
+      // Evitar que la nube descienda más allá del suelo en nivel 0.
       if (protagonista.level === 0 && protagonista.y + PROTAGONISTA_RADIUS > canvas.height - 20) {
         protagonista.y = canvas.height - 20 - PROTAGONISTA_RADIUS;
       }
@@ -434,76 +504,67 @@
 
     // ======================= DIBUJO DEL FONDO =======================
     function drawBackground(currentTime) {
+      // Nivel 2: Fondo con gradiente vertical y estrellas.
       if (protagonista.level === 2) {
-        ctx.fillStyle = "#3a3a5c";
+        let gradient = ctx.createLinearGradient(0, canvas.height, 0, 0);
+        gradient.addColorStop(0, "#87CEEB");
+        gradient.addColorStop(1, "#3a3a5c");
+        ctx.fillStyle = gradient;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
-      } else {
-        ctx.fillStyle = "#87CEEB";
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-      }
-      
-      backgroundClouds.forEach(cloud => {
-        ctx.save();
-        ctx.globalAlpha = 0.5;
-        ctx.fillStyle = "#ADD8E6";
-        let r = 20 * cloud.scale;
-        ctx.beginPath();
-        ctx.arc(cloud.x - r, cloud.y - r, r, Math.PI * 0.5, Math.PI * 1.5);
-        ctx.arc(cloud.x, cloud.y - 2 * r, r, Math.PI, Math.PI * 2);
-        ctx.arc(cloud.x + r, cloud.y - r, r, Math.PI * 1.5, Math.PI * 0.5);
-        ctx.arc(cloud.x, cloud.y, r, 0, Math.PI);
-        ctx.closePath();
-        ctx.fill();
-        ctx.restore();
-      });
-      backgroundParticles.forEach(p => {
-        ctx.save();
-        ctx.globalAlpha = 0.7;
-        ctx.fillStyle = "white";
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-      });
-      backgroundLeaves.forEach(leaf => {
-        ctx.save();
-        ctx.translate(leaf.x, leaf.y);
-        ctx.rotate(leaf.angle);
-        ctx.globalAlpha = 0.7;
-        ctx.fillStyle = "green";
-        ctx.beginPath();
-        ctx.ellipse(0, 0, 5, 10, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-      });
-      
-      if (protagonista.level === 2) {
-        for (let i = 0; i < 20; i++) {
-          let starX = Math.random() * canvas.width;
-          let starY = Math.random() * (canvas.height * 0.3);
+        stars.forEach(star => {
+          let alpha = 0.5 + star.amplitude * Math.sin(currentTime * star.speed + star.phase);
+          ctx.save();
+          ctx.globalAlpha = alpha;
           ctx.fillStyle = "white";
           ctx.beginPath();
-          ctx.arc(starX, starY, 2, 0, Math.PI * 2);
+          ctx.arc(star.x, star.y, star.radius, 0, Math.PI * 2);
           ctx.fill();
-        }
+          ctx.restore();
+        });
+
       }
-      // Nivel 0: Dibujar suelo con degradado y hierba precalculada
+      // Nivel 1: Fondo azul con nubes.
+      if (protagonista.level === 1) {
+        ctx.fillStyle = "#87CEEB";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        backgroundClouds.forEach(cloud => {
+          ctx.save();
+          ctx.globalAlpha = 0.5;
+          ctx.fillStyle = "#ADD8E6";
+          let r = 20 * cloud.scale;
+          ctx.beginPath();
+          ctx.arc(cloud.x - r, cloud.y - r, r, Math.PI * 0.5, Math.PI * 1.5);
+          ctx.arc(cloud.x, cloud.y - 2 * r, r, Math.PI, Math.PI * 2);
+          ctx.arc(cloud.x + r, cloud.y - r, r, Math.PI * 1.5, Math.PI * 0.5);
+          ctx.arc(cloud.x, cloud.y, r, 0, Math.PI);
+          ctx.closePath();
+          ctx.fill();
+          ctx.restore();
+        });
+        backgroundParticles.forEach(p => {
+          ctx.save();
+          ctx.globalAlpha = 0.7;
+          ctx.fillStyle = "white";
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        });
+      }
+      // Nivel 0: Suelo con degradado y hierba.
       if (protagonista.level === 0) {
         let groundHeight = 20;
         let groundY = canvas.height - groundHeight;
-
         let skyGradient = ctx.createLinearGradient(0, 0, 0, groundY);
-        skyGradient.addColorStop(0, "#87CEEB");  // Azul del nivel intermedio
-        skyGradient.addColorStop(1, "#F0F8FF");  // Azul muy claro, casi blanco (por ejemplo, AliceBlue)
+        skyGradient.addColorStop(0, "#87CEEB");
+        skyGradient.addColorStop(1, "#F0F8FF");
         ctx.fillStyle = skyGradient;
         ctx.fillRect(0, 0, canvas.width, groundY);
-        
         let groundGradient = ctx.createLinearGradient(0, groundY, 0, canvas.height);
-        groundGradient.addColorStop(0, "#228B22"); // Verde bosque
-        groundGradient.addColorStop(1, "#8B4513");  // Marrón
+        groundGradient.addColorStop(0, "#228B22");
+        groundGradient.addColorStop(1, "#8B4513");
         ctx.fillStyle = groundGradient;
         ctx.fillRect(0, groundY, canvas.width, groundHeight);
-        
         groundGrass.forEach(grass => {
           ctx.beginPath();
           ctx.moveTo(grass.baseX, groundY);
@@ -512,9 +573,30 @@
           ctx.lineWidth = 1;
           ctx.stroke();
         });
+        backgroundLeaves.forEach(leaf => {
+          ctx.save();
+          ctx.translate(leaf.x, leaf.y);
+          ctx.rotate(leaf.angle);
+          ctx.globalAlpha = 0.7;
+          ctx.fillStyle = "green";
+          ctx.beginPath();
+          ctx.ellipse(0, 0, 5, 10, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        });
+        backgroundParticles.forEach(p => {
+          ctx.save();
+          ctx.globalAlpha = 0.7;
+          ctx.fillStyle = "seagreen";
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        });
       }
       
-      if (sunsetEffect) {
+      // Efecto sunset (solo si está en el mismo nivel que el protagonista).
+      if (sunsetEffect && sunsetEffect.level === protagonista.level) {
         let elapsed = currentTime - sunsetEffect.startTime;
         let totalEffectTime = sunsetEffect.fadeInDuration + sunsetEffect.fullDuration + sunsetEffect.fadeOutDuration;
         let alpha = 0;
@@ -540,6 +622,7 @@
         ctx.fill();
         ctx.restore();
       }
+      
       if (inStorm) {
         ctx.save();
         let overlayAlpha = 0;
@@ -603,7 +686,13 @@
       ctx.beginPath();
       ctx.arc(rightEyeX, eyeY, eyeRadius, 0, Math.PI * 2);
       ctx.fill();
-      let angle = Math.atan2(protagonista.y - enemy.y, protagonista.x - enemy.x);
+      let dx = protagonista.x - enemy.x;
+      if (dx > canvas.width/2) dx -= canvas.width;
+      if (dx < -canvas.width/2) dx += canvas.width;
+      let dy = protagonista.y - enemy.y;
+      if (dy > canvas.height/2) dy -= canvas.height;
+      if (dy < -canvas.height/2) dy += canvas.height;
+      let angle = Math.atan2(dy, dx);
       let pupilOffset = r * 0.15;
       let pupilRadius = r * 0.15;
       ctx.fillStyle = "black";
@@ -685,7 +774,6 @@
         ctx.fillStyle = "white";
       }
       ctx.fill();
-
       let eyeRadius = radius * 0.15;
       let eyeOffsetX = radius * 0.5;
       let eyeOffsetY = radius * 0.3;
@@ -718,7 +806,6 @@
       ctx.strokeStyle = "black";
       ctx.lineWidth = 2;
       ctx.stroke();
-
       if (protagonista.bubble) {
         ctx.save();
         ctx.lineWidth = 4;
@@ -924,6 +1011,7 @@
         drawBackground(currentTime);
         drawProtagonist(currentTime);
         drawScore();
+        drawBirdGrid();  // Se dibuja la cuadrícula incluso en pausa
         requestAnimationFrame(gameLoop);
         return;
       }
@@ -962,10 +1050,16 @@
         }
         if (protagonista.rainbow && currentTime > protagonista.rainbowUntil)
           protagonista.rainbow = false;
+          
         enemies.forEach(enemy => {
           if (enemy.follower) {
+            enemy.level = protagonista.level;
             let dx = protagonista.x - enemy.x;
+            if (dx > canvas.width/2) dx -= canvas.width;
+            if (dx < -canvas.width/2) dx += canvas.width;
             let dy = protagonista.y - enemy.y;
+            if (dy > canvas.height/2) dy -= canvas.height;
+            if (dy < -canvas.height/2) dy += canvas.height;
             let angle = Math.atan2(dy, dx);
             enemy.vx = Math.cos(angle) * ENEMY_SPEED;
             enemy.vy = Math.sin(angle) * ENEMY_SPEED;
@@ -974,8 +1068,7 @@
         });
         for (let i = birds.length - 1; i >= 0; i--) {
           let bird = birds[i];
-          bird.x += bird.vx * dtFactor;
-          bird.y += bird.vy * dtFactor;
+          updatePosition(bird, 15, dtFactor);
           if (bird.x > canvas.width + 30)
             birds.splice(i, 1);
         }
@@ -1010,6 +1103,7 @@
       
       for (let i = enemies.length - 1; i >= 0; i--) {
         let enemy = enemies[i];
+        if (!enemy.follower && enemy.level !== protagonista.level) continue;
         if (enemy.follower)
           drawFollowerCloud(enemy, protagonista);
         else {
@@ -1066,6 +1160,7 @@
       
       for (let i = birds.length - 1; i >= 0; i--) {
         let bird = birds[i];
+        if (bird.level !== protagonista.level) continue;
         drawBird(bird, currentTime);
         if (!isPaused && !isGameOver && isPreciseBirdCollision(protagonista, bird)) {
           birds.splice(i, 1);
@@ -1079,7 +1174,9 @@
                 sunX: Math.random() * canvas.width,
                 sunY: Math.random() * canvas.height,
                 sunRadius: 50,
-                triggered: false
+                triggered: false,
+                level: protagonista.level,
+                fixedLevel: true
               };
               break;
             case "rainbow":
@@ -1091,7 +1188,9 @@
                 y: Math.random() * (canvas.height - 100),
                 width: canvas.width * 2,
                 height: 100,
-                angle: Math.random() * Math.PI * 2
+                angle: Math.random() * Math.PI * 2,
+                level: protagonista.level,
+                fixedLevel: true
               };
               break;
             case "normal":
@@ -1102,7 +1201,7 @@
         }
       }
       
-      if (rainbowEntity) {
+      if (rainbowEntity && rainbowEntity.level === protagonista.level) {
         if (currentTime - rainbowEntity.spawnTime > rainbowEntity.duration)
           rainbowEntity = null;
         else {
@@ -1120,6 +1219,8 @@
       
       drawEvaporationParticles(currentTime);
       drawScore();
+      drawBirdGrid();  // Dibuja la cuadrícula de niveles y alerta de pájaros
+      
       if (isGameOver) {
         ctx.fillStyle = "rgba(0,0,0,0.5)";
         ctx.font = "40px Arial";
@@ -1211,7 +1312,7 @@
       birdSpawner = setInterval(spawnBird, BIRD_SPAWN_INTERVAL);
     }
 
-    // ======================= GENERACIÓN DE ENEMIGOS =======================
+    // ======================= GENERACIÓN DE ENEMIGOS (nubes negras) =======================
     function spawnEnemy() {
       const side = Math.floor(Math.random() * 4);
       let x, y, angle;
@@ -1233,7 +1334,9 @@
       let vx = Math.cos(angle) * ENEMY_SPEED;
       let vy = Math.sin(angle) * ENEMY_SPEED;
       let enemy = { x: x, y: y, vx: vx, vy: vy, radius: ENEMY_RADIUS, giant: false, follower: false, rainCurtain: false };
+      
       enemy.level = protagonista.level;
+      
       const roll = Math.random();
       if (roll < PROB_ENEMY_GIANT) {
         enemy.giant = true;
@@ -1268,7 +1371,22 @@
         birdType = "red";
         birdColor = "red";
       }
-      birds.push({ x: x, y: y, vx: BIRD_SPEED, vy: 0, type: birdType, color: birdColor });
+      // Asignar un nivel aleatorio entre 0, 1 y 2 para los pájaros.
+      let randomLevel = Math.floor(Math.random() * 3);
+      // Solo se permitirá un pájaro por nivel. Si ya existe, no se genera uno nuevo.
+      if (birds.some(b => b.level === randomLevel)) {
+        return;
+      }
+      birds.push({ 
+        x: x, 
+        y: y, 
+        vx: BIRD_SPEED, 
+        vy: 0, 
+        type: birdType, 
+        color: birdColor, 
+        level: randomLevel, 
+        fixedLevel: true
+      });
     }
 
     // Iniciar el primer enemigo, el generador de pájaros y el bucle principal.

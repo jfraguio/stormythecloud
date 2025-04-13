@@ -42,7 +42,6 @@
     const ENEMY_RADIUS = 16;
     const BIRD_COLLISION_RADIUS = 15;
     const BIRD_SPAWN_INTERVAL = 5000;  // Se crea un pájaro cada 5 segundos.
-    // Los pájaros se generan en un nivel aleatorio y desaparecen al salir por el lado derecho.
     const RAINBOW_DURATION = 3000;
     const RAINBOW_MODE_DURATION = 5000;
     const RAINBOW_FADE_DURATION = 500;
@@ -248,7 +247,7 @@
         spark.y += spark.vy;
         ctx.save();
         ctx.globalAlpha = alpha;
-        ctx.fillStyle = "rgba(200,200,200,0.8)";
+        ctx.fillStyle = "rgba(255,255,255,0.8)";
         ctx.beginPath();
         ctx.arc(spark.x, spark.y, 3, 0, Math.PI * 2);
         ctx.fill();
@@ -332,8 +331,8 @@
       let centerY = rect.y + rect.height / 2;
       let dx = circle.x - centerX;
       let dy = circle.y - centerY;
-      let localX = dx * Math.cos(rect.angle) + dy * Math.sin(rect.angle);
-      let localY = -dx * Math.sin(rect.angle) + dy * Math.cos(rect.angle);
+      let localX = dx * Math.cos(-rect.angle) - dy * Math.sin(-rect.angle); // Corrección de ángulo
+      let localY = dx * Math.sin(-rect.angle) + dy * Math.cos(-rect.angle); // Corrección de ángulo
       let halfWidth = rect.width / 2;
       let halfHeight = rect.height / 2;
       let nearestX = Math.max(-halfWidth, Math.min(localX, halfWidth));
@@ -380,25 +379,33 @@
 
     // ======================= FUNCIONES DE DIBUJO DE LA NUEVA CUADRÍCULA =======================
     function drawBirdGrid() {
-      // Posicionar la cuadrícula justo debajo del score.
+      // Posicionar la cuadrícula vertical justo debajo del score.
       const gridX = SCORE_ZONE.x;
-      const gridY = SCORE_ZONE.y + 30;  // 10 + 20 (score) + margen
+      const gridY = SCORE_ZONE.y + 30;  // Margen inferior al score
       const cellSize = 30;
       const cellMargin = 5;
-      // Se asume una cuadrícula de 3 celdas (niveles 0, 1 y 2)
-      for (let i = 0; i < 3; i++) {
-        let x = gridX + i * (cellSize + cellMargin);
+      // Distribución vertical: nivel 2 (arriba), nivel 1 (medio) y nivel 0 (abajo)
+      const niveles = [2, 1, 0];
+
+      for (let i = 0; i < niveles.length; i++) {
+        let currentLevel = niveles[i];
+        // La celda se posiciona con x fija y y incremental.
+        let x = gridX;
+        let y = gridY + i * (cellSize + cellMargin);
+
         // Resaltar la celda del nivel actual del protagonista.
-        if (protagonista.level === i) {
+        if (protagonista.level === currentLevel) {
           ctx.strokeStyle = "green";
           ctx.lineWidth = 3;
         } else {
           ctx.strokeStyle = "black";
           ctx.lineWidth = 1;
         }
-        ctx.strokeRect(x, gridY, cellSize, cellSize);
-        // Si existe un pájaro en el nivel 'i', se dibuja un punto en la celda.
-        let bird = birds.find(b => b.level === i);
+
+        ctx.strokeRect(x, y, cellSize, cellSize);
+
+        // Dibujar un punto si existe un pájaro en el nivel 'currentLevel'.
+        let bird = birds.find(b => b.level === currentLevel);
         if (bird) {
           let dotColor;
           if (bird.type === "red") {
@@ -411,7 +418,7 @@
             dotColor = "black";
           }
           let cx = x + cellSize / 2;
-          let cy = gridY + cellSize / 2;
+          let cy = y + cellSize / 2;
           let dotRadius = 5;
           ctx.beginPath();
           ctx.arc(cx, cy, dotRadius, 0, Math.PI * 2);
@@ -421,64 +428,60 @@
       }
     }
 
-    // ======================= ACTUALIZACIÓN DE POSICIONES =======================
+    // ======================= ACTUALIZACIÓN DE POSICIONES (Corregida 1/2) =======================
     function updatePosition(obj, radius, dtFactor) {
       obj.x += obj.vx * dtFactor;
       obj.y += obj.vy * dtFactor;
+
+      // --- Wrapping Horizontal ---
       if (obj.x < -radius) obj.x = canvas.width + radius;
       if (obj.x > canvas.width + radius) obj.x = -radius;
-      
-      // Si el objeto tiene fixedLevel (pájaros y efectos) se usa wrapping vertical sin cambio de nivel.
+
+      // --- Corrección 1: SOLO comprobar fixedLevel ---
       if (obj.fixedLevel) {
         if (obj.y < -radius) obj.y = canvas.height + radius;
         if (obj.y > canvas.height + radius) obj.y = -radius;
-        return;
+        return; // Sale para los objetos fixedLevel
       }
-      
-      // Para la nube blanca y enemigos (nubes que pueden cambiar de nivel) se aplica el wrapping vertical.
+      // --- Fin Corrección 1 ---
+
+      // Lógica de cambio de nivel (ahora accesible para followers)
       if (typeof obj.level === "number") {
-        if (obj.y < -radius) {
-          if (obj.level === 0) {
-            obj.level = 1;
-            obj.y = canvas.height - radius;
-          } else if (obj.level === 1) {
-            obj.level = 2;
-            obj.y = canvas.height - radius;
-          } else if (obj.level === 2) {
-            obj.y = -radius;
-          }
-        } else if (obj.y > canvas.height + radius) {
-          if (obj.level === 2) {
-            obj.level = 1;
-            obj.y = radius;
-          } else if (obj.level === 1) {
-            obj.level = 0;
-            obj.y = radius;
-          } else if (obj.level === 0) {
-            obj.y = canvas.height + radius;
-          }
+        if (obj.y < -radius) { // Salió por arriba
+          if (obj.level === 0) { obj.level = 1; obj.y = canvas.height - radius; }
+          else if (obj.level === 1) { obj.level = 2; obj.y = canvas.height - radius; }
+          else if (obj.level === 2) { obj.y = -radius; } // Tope arriba
+        } else if (obj.y > canvas.height + radius) { // Salió por abajo
+          if (obj.level === 2) { obj.level = 1; obj.y = radius; }
+          else if (obj.level === 1) { obj.level = 0; obj.y = radius; }
+          else if (obj.level === 0) { obj.y = canvas.height + radius; } // Tope abajo
         }
-      } else {
+      } else { // Objetos sin nivel
         if (obj.y < -radius) obj.y = canvas.height + radius;
         if (obj.y > canvas.height + radius) obj.y = -radius;
       }
     }
+
+    // ======================= ACTUALIZACIÓN DEL PROTAGONISTA =======================
     function updateProtagonistPosition(dt, dtFactor) {
       if (protagonista.isDashing) {
-        protagonista.x += protagonista.dashVelX * dt;
-        protagonista.y += protagonista.dashVelY * dt;
+        // Convertir dt de milisegundos a segundos para que la velocidad (en px/seg) se aplique correctamente
+        let dtSeconds = dt / 1000;
+        protagonista.x += protagonista.dashVelX * dtSeconds;
+        protagonista.y += protagonista.dashVelY * dtSeconds;
         protagonista.dashRemainingTime -= dt;
         if (protagonista.dashRemainingTime <= 0)
           protagonista.isDashing = false;
-        if (protagonista.x < -PROTAGONISTA_RADIUS) protagonista.x = canvas.width + PROTAGONISTA_RADIUS;
-        if (protagonista.x > canvas.width + PROTAGONISTA_RADIUS) protagonista.x = -PROTAGONISTA_RADIUS;
+        // Se llama a updatePosition para manejar límites y niveles durante el dash
         updatePosition(protagonista, PROTAGONISTA_RADIUS, 1);
       } else {
+        // Movimiento normal
         updatePosition(protagonista, PROTAGONISTA_RADIUS, dtFactor);
       }
-      // Evitar que la nube descienda más allá del suelo en nivel 0.
+      // Lógica específica para el nivel 0 (suelo)
       if (protagonista.level === 0 && protagonista.y + PROTAGONISTA_RADIUS > canvas.height - 20) {
         protagonista.y = canvas.height - 20 - PROTAGONISTA_RADIUS;
+        if (protagonista.vy > 0 && !protagonista.isDashing) protagonista.vy = 0;
       }
     }
 
@@ -521,7 +524,6 @@
           ctx.fill();
           ctx.restore();
         });
-
       }
       // Nivel 1: Fondo azul con nubes.
       if (protagonista.level === 1) {
@@ -566,9 +568,12 @@
         ctx.fillStyle = groundGradient;
         ctx.fillRect(0, groundY, canvas.width, groundHeight);
         groundGrass.forEach(grass => {
+          // Calcular el desplazamiento horizontal basado en una función seno
+          let windOffset = Math.sin(currentTime / 1000 + grass.baseX) * 3; // 3 es la amplitud del viento
           ctx.beginPath();
           ctx.moveTo(grass.baseX, groundY);
-          ctx.quadraticCurveTo(grass.baseX, groundY - grass.bladeHeight * 0.5, grass.baseX, groundY - grass.bladeHeight);
+          // Se usa el punto de control modificado para simular el balanceo en el viento
+          ctx.quadraticCurveTo(grass.baseX + windOffset, groundY - grass.bladeHeight * 0.5, grass.baseX, groundY - grass.bladeHeight);
           ctx.strokeStyle = "#006400";
           ctx.lineWidth = 1;
           ctx.stroke();
@@ -594,7 +599,7 @@
           ctx.restore();
         });
       }
-      
+
       // Efecto sunset (solo si está en el mismo nivel que el protagonista).
       if (sunsetEffect && sunsetEffect.level === protagonista.level) {
         let elapsed = currentTime - sunsetEffect.startTime;
@@ -622,7 +627,7 @@
         ctx.fill();
         ctx.restore();
       }
-      
+
       if (inStorm) {
         ctx.save();
         let overlayAlpha = 0;
@@ -637,10 +642,10 @@
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.restore();
       }
-      
+
       if (inStorm) {
         lightningBolts.forEach(bolt => {
-          drawLightning(bolt);
+           drawLightning(bolt);
         });
       }
       drawEvaporationParticles(currentTime);
@@ -660,173 +665,70 @@
     function drawFollowerCloud(enemy, protagonista) {
       const scale = 0.8;
       const r = enemy.radius * scale;
+      const centerX = enemy.x;
+      const centerY = enemy.y;
       ctx.save();
       ctx.fillStyle = enemy.fillColor || "darkred";
-      ctx.beginPath();
-      ctx.arc(enemy.x - r * 0.6, enemy.y, r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(enemy.x + r * 0.6, enemy.y, r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(enemy.x, enemy.y - r * 0.8, r, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.beginPath(); ctx.arc(centerX - r * 0.6, centerY, r, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(centerX + r * 0.6, centerY, r, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(centerX, centerY - r * 0.8, r, 0, Math.PI * 2); ctx.fill();
       ctx.restore();
-
       ctx.save();
-      const eyeOffsetX = r * 0.5;
-      const eyeY = enemy.y - r * 0.3;
-      const eyeRadius = r * 0.3;
-      const leftEyeX = enemy.x - eyeOffsetX;
-      const rightEyeX = enemy.x + eyeOffsetX;
+      const eyeOffsetX = r * 0.5; const eyeY = centerY - r * 0.3; const eyeRadius = r * 0.3;
+      const leftEyeX = centerX - eyeOffsetX; const rightEyeX = centerX + eyeOffsetX;
       ctx.fillStyle = "white";
-      ctx.beginPath();
-      ctx.arc(leftEyeX, eyeY, eyeRadius, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(rightEyeX, eyeY, eyeRadius, 0, Math.PI * 2);
-      ctx.fill();
-      let dx = protagonista.x - enemy.x;
-      if (dx > canvas.width/2) dx -= canvas.width;
-      if (dx < -canvas.width/2) dx += canvas.width;
-      let dy = protagonista.y - enemy.y;
-      if (dy > canvas.height/2) dy -= canvas.height;
-      if (dy < -canvas.height/2) dy += canvas.height;
+      ctx.beginPath(); ctx.arc(leftEyeX, eyeY, eyeRadius, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(rightEyeX, eyeY, eyeRadius, 0, Math.PI * 2); ctx.fill();
+      let targetX = protagonista.x; let targetY = protagonista.y;
+      let dx = targetX - centerX; if (dx > canvas.width/2) dx -= canvas.width; if (dx < -canvas.width/2) dx += canvas.width;
+      let dy = targetY - centerY;
       let angle = Math.atan2(dy, dx);
-      let pupilOffset = r * 0.15;
-      let pupilRadius = r * 0.15;
+      let pupilOffset = r * 0.15; let pupilRadius = r * 0.15;
       ctx.fillStyle = "black";
-      ctx.beginPath();
-      ctx.arc(leftEyeX + pupilOffset * Math.cos(angle), eyeY + pupilOffset * Math.sin(angle), pupilRadius, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(rightEyeX + pupilOffset * Math.cos(angle), eyeY + pupilOffset * Math.sin(angle), pupilRadius, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.beginPath(); ctx.arc(leftEyeX + pupilOffset * Math.cos(angle), eyeY + pupilOffset * Math.sin(angle), pupilRadius, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(rightEyeX + pupilOffset * Math.cos(angle), eyeY + pupilOffset * Math.sin(angle), pupilRadius, 0, Math.PI * 2); ctx.fill();
       ctx.restore();
     }
     function drawBird(bird, currentTime) {
-      ctx.save();
-      ctx.translate(bird.x, bird.y);
-      if (bird.type === "rainbow") {
-        let gradient = ctx.createLinearGradient(-15, 0, 15, 0);
-        gradient.addColorStop(0, "red");
-        gradient.addColorStop(0.16, "orange");
-        gradient.addColorStop(0.33, "yellow");
-        gradient.addColorStop(0.5, "green");
-        gradient.addColorStop(0.66, "blue");
-        gradient.addColorStop(0.83, "indigo");
-        gradient.addColorStop(1, "violet");
-        ctx.fillStyle = gradient;
-      } else {
-        ctx.fillStyle = bird.color;
-      }
-      ctx.beginPath();
-      ctx.ellipse(0, 0, 15, 7, 0, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.save(); ctx.translate(bird.x, bird.y);
+      if (bird.type === "rainbow") { let g = ctx.createLinearGradient(-15, 0, 15, 0); g.addColorStop(0,"red"); g.addColorStop(0.16,"orange"); g.addColorStop(0.33,"yellow"); g.addColorStop(0.5,"green"); g.addColorStop(0.66,"blue"); g.addColorStop(0.83,"indigo"); g.addColorStop(1,"violet"); ctx.fillStyle = g; }
+      else { ctx.fillStyle = bird.color; }
+      ctx.beginPath(); ctx.ellipse(0, 0, 15, 7, 0, 0, Math.PI * 2); ctx.fill();
       let wingOffset = Math.sin(currentTime / 200) * 5;
       ctx.fillStyle = (bird.type === "red") ? "darkred" : "darkgray";
-      ctx.beginPath();
-      ctx.ellipse(-5, -7 + wingOffset, 8, 4, -0.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.ellipse(-5, 7 + wingOffset, 8, 4, 0.5, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.beginPath(); ctx.ellipse(-5, -7 + wingOffset, 8, 4, -0.5, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(-5, 7 + wingOffset, 8, 4, 0.5, 0, Math.PI * 2); ctx.fill();
       ctx.restore();
     }
     function drawRainbow(rainbow, currentTime) {
       let progress = Math.min((currentTime - rainbow.spawnTime) / rainbow.fadeDuration, 1);
-      ctx.save();
-      ctx.globalAlpha = progress;
-      let centerX = rainbow.x + rainbow.width / 2;
-      let centerY = rainbow.y + rainbow.height / 2;
-      ctx.translate(centerX, centerY);
-      ctx.rotate(rainbow.angle);
+      ctx.save(); ctx.globalAlpha = progress;
+      let centerX = rainbow.x + rainbow.width / 2; let centerY = rainbow.y + rainbow.height / 2;
+      ctx.translate(centerX, centerY); ctx.rotate(rainbow.angle);
       let colors = ["red", "orange", "yellow", "green", "blue", "indigo", "violet"];
-      let bandHeight = rainbow.height / colors.length;
-      let startY = -rainbow.height / 2;
-      for (let i = 0; i < colors.length; i++) {
-        ctx.fillStyle = colors[i];
-        ctx.fillRect(-rainbow.width / 2, startY, rainbow.width, bandHeight);
-        startY += bandHeight;
-      }
+      let bandHeight = rainbow.height / colors.length; let startY = -rainbow.height / 2;
+      for (let i = 0; i < colors.length; i++) { ctx.fillStyle = colors[i]; ctx.fillRect(-rainbow.width / 2, startY, rainbow.width, bandHeight); startY += bandHeight; }
       ctx.restore();
     }
     function drawProtagonist(currentTime) {
       ctx.save();
       let x = protagonista.x, y = protagonista.y, radius = PROTAGONISTA_RADIUS;
+      let drawX = x - radius, drawY = y - radius;
       ctx.beginPath();
-      ctx.arc(x - radius, y - radius, radius, Math.PI * 0.5, Math.PI * 1.5);
-      ctx.arc(x, y - 2 * radius, radius, Math.PI, Math.PI * 2);
-      ctx.arc(x + radius, y - radius, radius, Math.PI * 1.5, Math.PI * 0.5);
-      ctx.arc(x, y, radius, 0, Math.PI);
+      ctx.arc(drawX, drawY, radius, Math.PI * 0.5, Math.PI * 1.5); ctx.arc(drawX + radius, drawY - radius, radius, Math.PI, Math.PI * 2); ctx.arc(drawX + radius * 2, drawY, radius, Math.PI * 1.5, Math.PI * 0.5); ctx.arc(drawX + radius, drawY + radius, radius, 0, Math.PI);
       ctx.closePath();
-      if (protagonista.rainbow) {
-        let grad = ctx.createLinearGradient(x - radius, y - 2 * radius, x + radius, y);
-        grad.addColorStop(0, "red");
-        grad.addColorStop(0.16, "orange");
-        grad.addColorStop(0.33, "yellow");
-        grad.addColorStop(0.5, "green");
-        grad.addColorStop(0.66, "blue");
-        grad.addColorStop(0.83, "indigo");
-        grad.addColorStop(1, "violet");
-        ctx.fillStyle = grad;
-      } else {
-        ctx.fillStyle = "white";
-      }
+      if (protagonista.rainbow) { let grad = ctx.createLinearGradient(drawX, drawY - radius, drawX + 2*radius, drawY + radius); grad.addColorStop(0,"red"); grad.addColorStop(0.16,"orange"); grad.addColorStop(0.33,"yellow"); grad.addColorStop(0.5,"green"); grad.addColorStop(0.66,"blue"); grad.addColorStop(0.83,"indigo"); grad.addColorStop(1,"violet"); ctx.fillStyle = grad; }
+      else { ctx.fillStyle = "white"; }
       ctx.fill();
-      let eyeRadius = radius * 0.15;
-      let eyeOffsetX = radius * 0.5;
-      let eyeOffsetY = radius * 0.3;
-      if (sunsetEffect) {
-        ctx.fillStyle = "black";
-        ctx.beginPath();
-        ctx.ellipse(x - eyeOffsetX, y - eyeOffsetY, eyeRadius, eyeRadius * 0.75, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.beginPath();
-        ctx.ellipse(x + eyeOffsetX, y - eyeOffsetY, eyeRadius, eyeRadius * 0.75, 0, 0, Math.PI * 2);
-        ctx.fill();
-      } else {
-        ctx.fillStyle = "black";
-        ctx.beginPath();
-        ctx.arc(x - eyeOffsetX, y - eyeOffsetY, eyeRadius, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(x + eyeOffsetX, y - eyeOffsetY, eyeRadius, 0, Math.PI * 2);
-        ctx.fill();
-      }
+      let eyeRadius = radius * 0.15, eyeOffsetX = radius * 0.5, eyeOffsetY = radius * 0.3;
+      if (sunsetEffect) { ctx.fillStyle = "black"; ctx.beginPath(); ctx.ellipse(x - eyeOffsetX, y - eyeOffsetY, eyeRadius, eyeRadius * 0.75, 0, 0, Math.PI * 2); ctx.fill(); ctx.beginPath(); ctx.ellipse(x + eyeOffsetX, y - eyeOffsetY, eyeRadius, eyeRadius * 0.75, 0, 0, Math.PI * 2); ctx.fill(); }
+      else { ctx.fillStyle = "black"; ctx.beginPath(); ctx.arc(x - eyeOffsetX, y - eyeOffsetY, eyeRadius, 0, Math.PI * 2); ctx.fill(); ctx.beginPath(); ctx.arc(x + eyeOffsetX, y - eyeOffsetY, eyeRadius, 0, Math.PI * 2); ctx.fill(); }
       ctx.beginPath();
-      if (isGameOver)
-        ctx.arc(x, y + radius * 0.8, radius * 0.6, 0, Math.PI, true);
-      else if (protagonista.rainbow)
-        ctx.arc(x, y + radius * 0.2, radius * 0.6, 0, Math.PI, false);
-      else {
-        ctx.moveTo(x - radius * 0.6, y + radius * 0.4);
-        ctx.lineTo(x + radius * 0.6, y + radius * 0.4);
-      }
-      ctx.strokeStyle = "black";
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      if (protagonista.bubble) {
-        ctx.save();
-        ctx.lineWidth = 4;
-        ctx.fillStyle = "rgba(200,200,200,0.3)";
-        ctx.strokeStyle = "rgba(200,200,200,0.8)";
-        ctx.beginPath();
-        ctx.arc(x, y - BUBBLE_OFFSET_Y, PROTAGONISTA_RADIUS + BUBBLE_EXTRA_RADIUS, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-        ctx.restore();
-      } else if (protagonista.isSuperdash) {
-        ctx.save();
-        ctx.lineWidth = 4;
-        ctx.fillStyle = "rgba(218,165,32,0.2)";
-        ctx.strokeStyle = "rgba(218,165,32,0.8)";
-        ctx.beginPath();
-        ctx.arc(x, y - BUBBLE_OFFSET_Y, PROTAGONISTA_RADIUS + BUBBLE_EXTRA_RADIUS, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-        ctx.restore();
-      }
+      if (isGameOver) ctx.arc(x, y + radius * 0.8, radius * 0.6, 0, Math.PI, true);
+      else if (protagonista.rainbow) ctx.arc(x, y + radius * 0.2, radius * 0.6, 0, Math.PI, false);
+      else { ctx.moveTo(x - radius * 0.6, y + radius * 0.4); ctx.lineTo(x + radius * 0.6, y + radius * 0.4); }
+      ctx.strokeStyle = "black"; ctx.lineWidth = 2; ctx.stroke();
+      if (protagonista.bubble || protagonista.isSuperdash) { ctx.save(); ctx.lineWidth = 2; let fill = protagonista.bubble ? "rgba(255,255,255,0.3)" : "rgba(218,165,32,0.2)"; let stroke = protagonista.bubble ? "rgba(200,200,200,0.8)" : "rgba(218,165,32,0.8)"; ctx.fillStyle = fill; ctx.strokeStyle = stroke; ctx.beginPath(); ctx.arc(x, y - BUBBLE_OFFSET_Y, PROTAGONISTA_RADIUS + BUBBLE_EXTRA_RADIUS, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); ctx.restore(); }
       ctx.restore();
     }
     function drawScore() {
@@ -853,23 +755,10 @@
       ctx.restore();
     }
     function drawRainCurtain(enemy, currentTime) {
-      const totalWidth = 3 * enemy.radius;
-      const centerX = enemy.x;
-      const startX = centerX - (totalWidth / 2);
-      const lineCount = 4;
-      ctx.save();
-      ctx.setLineDash([4, 4]);
-      ctx.strokeStyle = "white";
-      ctx.lineWidth = 1;
-      const startY = enemy.y + enemy.radius;
-      for (let i = 0; i < lineCount; i++) {
-        let lineX = startX + (i + 0.5) * (totalWidth / lineCount);
-        let offset = (currentTime / 50) % 10;
-        ctx.beginPath();
-        ctx.moveTo(lineX, startY + offset);
-        ctx.lineTo(lineX, canvas.height);
-        ctx.stroke();
-      }
+      const totalWidth = 3 * enemy.radius; const centerX = enemy.x; const startX = centerX - (totalWidth / 2);
+      const lineCount = 4; ctx.save(); ctx.setLineDash([4, 4]); ctx.strokeStyle = "white"; ctx.lineWidth = 1;
+      const startY = enemy.y + enemy.radius * 0.5; // Ajuste relativo a y
+      for (let i = 0; i < lineCount; i++) { let lineX = startX + (i + 0.5) * (totalWidth / lineCount); let offset = (currentTime / 50) % 10; ctx.beginPath(); ctx.moveTo(lineX, startY + offset); ctx.lineTo(lineX, canvas.height); ctx.stroke(); }
       ctx.restore();
     }
 
@@ -879,11 +768,17 @@
           e.key === "ArrowLeft" || e.key === "ArrowRight")) {
         gameStarted = true;
         isPaused = false;
+         lastTime = performance.now(); // Actualizar tiempo al iniciar
       }
       if (e.code === "Space") {
+        e.preventDefault(); // Prevenir scroll
         togglePause();
         return;
       }
+      if (isGameOver && e.key === 'Enter') { // Reiniciar con Enter
+            resetGame();
+            return;
+       }
       if (!isPaused && !isGameOver) {
         let direction = null;
         switch(e.key) {
@@ -893,6 +788,7 @@
           case 'ArrowRight': direction = { x: 1, y: 0 }; break;
         }
         if (direction) {
+            e.preventDefault(); // Prevenir scroll con flechas
           let now = performance.now();
           if (lastInputDirection &&
               lastInputDirection.x === direction.x &&
@@ -902,497 +798,379 @@
             let dashMultiplier = (protagonista.isSuperdash ? SUPERDASH_MULTIPLIER : 1);
             protagonista.isDashing = true;
             protagonista.dashRemainingTime = DASH_DURATION;
-            const dashVelocity = (DASH_DISTANCE * dashMultiplier) / DASH_DURATION;
-            protagonista.dashVelX = direction.x * dashVelocity;
-            protagonista.dashVelY = direction.y * dashVelocity;
+            // Corrección cálculo velocidad dash
+            protagonista.dashVelX = direction.x * (DASH_DISTANCE * dashMultiplier) / (DASH_DURATION / 1000);
+            protagonista.dashVelY = direction.y * (DASH_DISTANCE * dashMultiplier) / (DASH_DURATION / 1000);
+            lastInputDirection = null; // Resetear para evitar triple dash
+            lastInputTime = 0;
           } else {
             protagonista.vx = direction.x * PROTAGONISTA_SPEED;
             protagonista.vy = direction.y * PROTAGONISTA_SPEED;
+             lastInputDirection = direction; // Guardar para posible dash
+             lastInputTime = now;
           }
-          lastInputDirection = direction;
-          lastInputTime = now;
         }
       }
     });
     let touchStartX = null, touchStartY = null;
+    let touchStartTime = 0; // Para detectar taps
     const swipeThreshold = 30;
+    const tapThreshold = 20;
+    const tapTimeThreshold = 200;
     canvas.addEventListener('touchstart', function(e) {
-      const touch = e.changedTouches[0];
-      touchStartX = touch.screenX;
-      touchStartY = touch.screenY;
-    }, false);
+      if (e.touches.length === 1) { // Solo primer dedo
+          const touch = e.touches[0];
+          touchStartX = touch.clientX;
+          touchStartY = touch.clientY;
+          touchStartTime = performance.now();
+          e.preventDefault();
+      }
+    }, { passive: false });
     canvas.addEventListener('touchend', function(e) {
-      if (IS_MOBILE && isGameOver) {
-        resetGame();
-        return;
-      }
-      if (!gameStarted) {
-        gameStarted = true;
-        isPaused = false;
-      }
       if (touchStartX === null || touchStartY === null) return;
       const touch = e.changedTouches[0];
-      const deltaX = touch.screenX - touchStartX;
-      const deltaY = touch.screenY - touchStartY;
-      touchStartX = null;
-      touchStartY = null;
-      let rect = canvas.getBoundingClientRect();
-      let x = touch.clientX - rect.left;
-      let y = touch.clientY - rect.top;
-      if (Math.abs(deltaX) < swipeThreshold && Math.abs(deltaY) < swipeThreshold) {
-        if (x >= SCORE_ZONE.x && x <= SCORE_ZONE.x + SCORE_ZONE.width &&
-            y >= SCORE_ZONE.y && y <= SCORE_ZONE.y + SCORE_ZONE.height) {
-          togglePause();
-        }
-        return;
+      const deltaX = touch.clientX - touchStartX;
+      const deltaY = touch.clientY - touchStartY;
+      const touchEndTime = performance.now();
+      const touchDuration = touchEndTime - touchStartTime;
+      const startX = touchStartX; // Guardar para lógica de tap
+      const startY = touchStartY;
+      touchStartX = null; touchStartY = null;
+      e.preventDefault();
+
+      // Lógica Tap vs Swipe
+      if (Math.abs(deltaX) < tapThreshold && Math.abs(deltaY) < tapThreshold && touchDuration < tapTimeThreshold) {
+         // Es un TAP
+          if (isGameOver) { resetGame(); return; }
+          if (!gameStarted) { gameStarted = true; isPaused = false; lastTime = performance.now(); return; }
+          // Tap en zona de score para pausar
+          let rect = canvas.getBoundingClientRect();
+          let tapX = touch.clientX - rect.left;
+          let tapY = touch.clientY - rect.top;
+           if (tapX >= SCORE_ZONE.x && tapX <= SCORE_ZONE.x + SCORE_ZONE.width &&
+               tapY >= SCORE_ZONE.y && tapY <= SCORE_ZONE.y + SCORE_ZONE.height + 10) { // Margen extra
+                 togglePause();
+            }
+            // Podría haber otras acciones de tap aquí
+          return;
       }
-      let direction = null;
-      if (Math.abs(deltaX) > Math.abs(deltaY))
-        direction = (deltaX > 0) ? { x: 1, y: 0 } : { x: -1, y: 0 };
-      else
-        direction = (deltaY > 0) ? { x: 0, y: 1 } : { x: 0, y: -1 };
-      if (direction) {
-        let now = performance.now();
-        if (lastInputDirection &&
-            lastInputDirection.x === direction.x &&
-            lastInputDirection.y === direction.y &&
-            (now - lastInputTime) < DASH_THRESHOLD &&
-            !protagonista.isDashing) {
-          let dashMultiplier = (protagonista.isSuperdash ? SUPERDASH_MULTIPLIER : 1);
-          protagonista.isDashing = true;
-          protagonista.dashRemainingTime = DASH_DURATION;
-          const dashVelocity = (DASH_DISTANCE * dashMultiplier) / DASH_DURATION;
-          protagonista.dashVelX = direction.x * dashVelocity;
-          protagonista.dashVelY = direction.y * dashVelocity;
-        } else {
-          protagonista.vx = direction.x * PROTAGONISTA_SPEED;
-          protagonista.vy = direction.y * PROTAGONISTA_SPEED;
-        }
-        lastInputDirection = direction;
-        lastInputTime = now;
+
+      // Es un SWIPE (si no fue tap y supera umbral)
+      if (Math.abs(deltaX) > swipeThreshold || Math.abs(deltaY) > swipeThreshold) {
+          if (!gameStarted) { gameStarted = true; isPaused = false; lastTime = performance.now(); } // Iniciar con swipe
+
+          if (!isPaused && !isGameOver) {
+              let direction = null;
+              if (Math.abs(deltaX) > Math.abs(deltaY)) direction = (deltaX > 0) ? { x: 1, y: 0 } : { x: -1, y: 0 };
+              else direction = (deltaY > 0) ? { x: 0, y: 1 } : { x: 0, y: -1 };
+
+              if (direction) {
+                  let now = performance.now();
+                  if (lastInputDirection && lastInputDirection.x === direction.x && lastInputDirection.y === direction.y &&
+                      (now - lastInputTime) < DASH_THRESHOLD * 1.5 && // Umbral touch
+                      !protagonista.isDashing) {
+                      // DASH
+                      let dashMultiplier = (protagonista.isSuperdash ? SUPERDASH_MULTIPLIER : 1);
+                      protagonista.isDashing = true;
+                      protagonista.dashRemainingTime = DASH_DURATION;
+                      protagonista.dashVelX = direction.x * (DASH_DISTANCE * dashMultiplier) / (DASH_DURATION / 1000);
+                      protagonista.dashVelY = direction.y * (DASH_DISTANCE * dashMultiplier) / (DASH_DURATION / 1000);
+                      lastInputDirection = null; lastInputTime = 0;
+                  } else {
+                      // MOVIMIENTO NORMAL
+                      protagonista.vx = direction.x * PROTAGONISTA_SPEED;
+                      protagonista.vy = direction.y * PROTAGONISTA_SPEED;
+                      lastInputDirection = direction; lastInputTime = now;
+                  }
+              }
+          }
       }
-    }, false);
+    }, { passive: false });
+    canvas.addEventListener('touchmove', function(e) { e.preventDefault(); }, { passive: false }); // Prevenir scroll
     canvas.addEventListener('click', function(e) {
       if (!IS_MOBILE) {
-        if (!gameStarted) {
-          gameStarted = true;
-          isPaused = false;
-        } else {
-          togglePause();
+        if (isGameOver) { resetGame(); return; }
+        if (!gameStarted) { gameStarted = true; isPaused = false; lastTime = performance.now(); return; }
+        let rect = canvas.getBoundingClientRect();
+        let clickX = e.clientX - rect.left;
+        let clickY = e.clientY - rect.top;
+        if (clickX >= SCORE_ZONE.x && clickX <= SCORE_ZONE.x + SCORE_ZONE.width &&
+            clickY >= SCORE_ZONE.y && clickY <= SCORE_ZONE.y + SCORE_ZONE.height) {
+            togglePause();
         }
+        // Click fuera de score no hace nada en PC una vez iniciado (a menos que sea game over)
       }
     });
 
     // ======================= PAUSA Y REINICIO =======================
     function togglePause() {
-      if (isGameOver)
-        resetGame();
-      else
-        isPaused = !isPaused;
+      if (isGameOver) return;
+      isPaused = !isPaused;
+       if (!isPaused) {
+           lastTime = performance.now(); // Evitar saltos al reanudar
+       }
     }
     function beginStormEnding(currentTime) {
-      if (stormState !== "ending") {
+      if (stormState === "active") { // Solo si estaba activa
         stormState = "ending";
         stormEndingTransitionStart = currentTime;
       }
     }
 
-    // ======================= BUCLE PRINCIPAL DEL JUEGO =======================
+    // ======================= BUCLE PRINCIPAL DEL JUEGO (Con corrección 2/2) =======================
     function gameLoop(currentTime) {
       let dt = currentTime - lastTime;
-      let dtFactor = dt / 16.67;
+       dt = Math.min(dt, 50); // Limitar dt
+      let dtFactor = dt / 16.67; // Factor delta
       lastTime = currentTime;
-      
+
       if (currentTime > protagonista.superdashUntil)
         protagonista.isSuperdash = false;
-      
-      if (!gameStarted) {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        drawBackground(currentTime);
-        drawProtagonist(currentTime);
-        drawScore();
-        drawBirdGrid();  // Se dibuja la cuadrícula incluso en pausa
-        requestAnimationFrame(gameLoop);
-        return;
+
+      // --- Pantalla de Inicio / Pausa ---
+      if (!gameStarted || isPaused) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawBackground(currentTime);
+            // Dibujar entidades visibles
+             enemies.forEach(e => { if(e.level === protagonista.level) { if (e.follower) drawFollowerCloud(e, protagonista); else drawCloud(e.x - e.radius, e.y - e.radius, e.radius, "black"); if (e.giant) drawAngryFace(e.x, e.y - e.radius, e.radius); if (e.rainCurtain) drawRainCurtain(e, currentTime); }});
+             birds.forEach(b => { if(b.level === protagonista.level) drawBird(b, currentTime); });
+             if (rainbowEntity && rainbowEntity.level === protagonista.level) drawRainbow(rainbowEntity, currentTime);
+            drawProtagonist(currentTime);
+            drawScore();
+            drawBirdGrid();
+            // Mensaje
+            ctx.save(); ctx.fillStyle = "rgba(0, 0, 0, 0.6)"; ctx.fillRect(0, canvas.height / 2 - 40, canvas.width, 80); ctx.fillStyle = "white"; ctx.font = "bold 30px Arial"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+            if (!gameStarted) { ctx.fillText("STORMY THE CLOUD", canvas.width / 2, canvas.height / 2 - 10); ctx.font = "20px Arial"; ctx.fillText("MOVE TO START", canvas.width / 2, canvas.height / 2 + 25); }
+            else { ctx.fillText("PAUSA", canvas.width / 2, canvas.height / 2); }
+            ctx.restore();
+            requestAnimationFrame(gameLoop);
+            return;
       }
-      
-      if (sunsetEffect) {
-        let elapsed = currentTime - sunsetEffect.startTime;
-        let totalEffectTime = sunsetEffect.fadeInDuration + sunsetEffect.fullDuration + sunsetEffect.fadeOutDuration;
-        if (elapsed >= totalEffectTime)
-          sunsetEffect = null;
-      }
-      if (sunsetEffect) {
-        let dx = protagonista.x - sunsetEffect.sunX;
-        let dy = protagonista.y - sunsetEffect.sunY;
-        if (Math.hypot(dx, dy) < PROTAGONISTA_RADIUS + sunsetEffect.sunRadius) {
-          if (!sunsetEffect.triggered) {
-            while (enemies.length > 0) {
-              let enemy = enemies.shift();
-              spawnEvaporationEffect(enemy.x, enemy.y, enemy.radius);
-            }
-            sunsetEffect.triggered = true;
-          }
-        }
-      }
-      
-      if (!isPaused && !isGameOver) {
+
+       // --- Lógica del Juego ---
+       if (!isGameOver) {
         score += dtFactor * 0.1;
         updateBackground(dtFactor);
-        updateProtagonistPosition(dt, dtFactor);
-        if (protagonista.isSuperdash) {
-          for (let i = 0; i < 2; i++)
-            spawnSuperdashSparkle(protagonista.x, protagonista.y);
-        }
-        if (protagonista.bubble) {
-          for (let i = 0; i < 2; i++)
-            spawnBubbleSparkle(protagonista.x, protagonista.y);
-        }
-        if (protagonista.rainbow && currentTime > protagonista.rainbowUntil)
-          protagonista.rainbow = false;
-          
+        updateProtagonistPosition(dt, dtFactor); // Mover prota
+
+        // Partículas/Estelas
+        if (protagonista.isSuperdash) { for (let i = 0; i < 2; i++) spawnSuperdashSparkle(protagonista.x, protagonista.y); }
+        if (protagonista.bubble) { for (let i = 0; i < 2; i++) spawnBubbleSparkle(protagonista.x, protagonista.y); }
+        if (protagonista.rainbow && currentTime > protagonista.rainbowUntil) protagonista.rainbow = false;
+
+
+        // --- Actualizar Enemigos (Con Corrección 2: Velocidad Follower) ---
         enemies.forEach(enemy => {
           if (enemy.follower) {
-            enemy.level = protagonista.level;
-            let dx = protagonista.x - enemy.x;
-            if (dx > canvas.width/2) dx -= canvas.width;
-            if (dx < -canvas.width/2) dx += canvas.width;
-            let dy = protagonista.y - enemy.y;
-            if (dy > canvas.height/2) dy -= canvas.height;
-            if (dy < -canvas.height/2) dy += canvas.height;
+            // ***** INICIO DE LA CORRECCIÓN DE VELOCIDAD DEL FOLLOWER *****
+            let targetX = protagonista.x;
+            let targetY;
+            let forceVertical = false;
+
+            if (protagonista.level > enemy.level) {
+              targetY = -100; forceVertical = true; // Ir ARRIBA
+            } else if (protagonista.level < enemy.level) {
+              targetY = canvas.height + 100; forceVertical = true; // Ir ABAJO
+            } else {
+              targetY = protagonista.y; forceVertical = false; // Mismo nivel
+            }
+
+            let dx = targetX - enemy.x;
+            if (Math.abs(dx) > canvas.width / 2) dx -= Math.sign(dx) * canvas.width;
+            let dy = targetY - enemy.y;
             let angle = Math.atan2(dy, dx);
-            enemy.vx = Math.cos(angle) * ENEMY_SPEED;
-            enemy.vy = Math.sin(angle) * ENEMY_SPEED;
+
+            if (forceVertical) {
+                 enemy.vx = Math.cos(angle) * ENEMY_SPEED * 0.5; // Mitad vel horizontal
+                 enemy.vy = Math.sin(angle) * ENEMY_SPEED;       // Vel vertical completa
+                 // Doble chequeo de signo para vy
+                 if (protagonista.level > enemy.level && enemy.vy > 0) enemy.vy *= -1;
+                 if (protagonista.level < enemy.level && enemy.vy < 0) enemy.vy *= -1;
+                 // Evitar que vy sea exactamente 0 si debe moverse verticalmente
+                 if (enemy.vy === 0) enemy.vy = (protagonista.level > enemy.level) ? -ENEMY_SPEED : ENEMY_SPEED;
+
+            } else { // Mismo nivel
+                enemy.vx = Math.cos(angle) * ENEMY_SPEED;
+                enemy.vy = Math.sin(angle) * ENEMY_SPEED;
+            }
+            // ***** FIN DE LA CORRECCIÓN DE VELOCIDAD DEL FOLLOWER *****
           }
+          // Aplicar movimiento y cambio de nivel
           updatePosition(enemy, enemy.radius, dtFactor);
         });
+
+        // Actualizar Pájaros
         for (let i = birds.length - 1; i >= 0; i--) {
           let bird = birds[i];
-          updatePosition(bird, 15, dtFactor);
-          if (bird.x > canvas.width + 30)
-            birds.splice(i, 1);
+          updatePosition(bird, BIRD_COLLISION_RADIUS, dtFactor);
+          if (bird.x > canvas.width + 30) birds.splice(i, 1);
         }
-        let enemyInterval = (BASE_ENEMY_INTERVAL * ENEMY_SPAWN_INTERVAL_FACTOR) - Math.floor(score / 100) * 1000;
+
+        // Actualizar Arcoíris Físico
+        if (rainbowEntity && currentTime - rainbowEntity.spawnTime > rainbowEntity.duration) {
+            rainbowEntity = null;
+        }
+
+        // Generar Enemigos
+        let enemyInterval = BASE_ENEMY_INTERVAL * Math.pow(ENEMY_SPAWN_INTERVAL_FACTOR, Math.floor(score / 100));
         enemyInterval = Math.max(200, enemyInterval);
         enemySpawnAccumulator += dt;
-        if (enemySpawnAccumulator >= enemyInterval) {
-          spawnEnemy();
-          enemySpawnAccumulator -= enemyInterval;
-        }
-        if (score >= currentStormThreshold && !inStorm && stormState === "none") {
-          inStorm = true;
-          stormState = "active";
-          stormTransitionStart = currentTime;
-        }
+        if (enemySpawnAccumulator >= enemyInterval) { spawnEnemy(); enemySpawnAccumulator = 0; }
+
+        // Gestión Tormenta
+        if (score >= currentStormThreshold && !inStorm && stormState === "none") { inStorm = true; stormState = "active"; stormTransitionStart = currentTime; }
         if (inStorm) {
           lightningAccumulator += dt;
-          if (lightningAccumulator >= LIGHTNING_INTERVAL) {
-            lightningBolts.push({ spawnTime: currentTime, duration: LIGHTNING_DURATION, x: Math.random() * canvas.width });
-            lightningAccumulator = 0;
-          }
+          if (lightningAccumulator >= LIGHTNING_INTERVAL) { lightningBolts.push({ spawnTime: currentTime, duration: LIGHTNING_DURATION, x: Math.random() * canvas.width }); lightningAccumulator = 0; }
           lightningBolts = lightningBolts.filter(bolt => currentTime - bolt.spawnTime < bolt.duration);
         }
-      }
-      
+        if (stormState === "ending" && currentTime - stormEndingTransitionStart > 5000) { inStorm = false; stormState = "none"; giantCloudKills = 0; currentStormThreshold += 400; }
+
+        // Gestión Sunset
+        if (sunsetEffect) {
+            let elapsed = currentTime - sunsetEffect.startTime;
+            let totalEffectTime = sunsetEffect.fadeInDuration + sunsetEffect.fullDuration + sunsetEffect.fadeOutDuration;
+            if (elapsed >= totalEffectTime) sunsetEffect = null;
+            else if (sunsetEffect.level === protagonista.level && !sunsetEffect.triggered) {
+                let dx = protagonista.x - sunsetEffect.sunX, dy = protagonista.y - sunsetEffect.sunY;
+                if (Math.hypot(dx, dy) < PROTAGONISTA_RADIUS + sunsetEffect.sunRadius) {
+                    for (let i = enemies.length - 1; i >= 0; i--) if (enemies[i].level === protagonista.level) { spawnEvaporationEffect(enemies[i].x, enemies[i].y, enemies[i].radius); enemies.splice(i, 1); }
+                    sunsetEffect.triggered = true;
+                }
+            }
+        }
+
+        // Colisiones
+        for (let i = enemies.length - 1; i >= 0; i--) {
+            let enemy = enemies[i];
+            if (enemy.level !== protagonista.level) continue; // Mismo nivel
+
+            // Nube vs Nube
+            if (isPreciseCloudCollision(protagonista, enemy)) {
+                if (protagonista.isSuperdash) { spawnEvaporationEffect(enemy.x, enemy.y, enemy.radius); enemies.splice(i, 1); score += 5; }
+                else if (protagonista.rainbow || protagonista.bubble) { spawnEvaporationEffect(enemy.x, enemy.y, enemy.radius); score += enemy.giant ? 10 : 2; if (enemy.giant && stormState === "active") { giantCloudKills++; let req = (currentStormThreshold <= 400) ? 3 : 6; if (giantCloudKills >= req) beginStormEnding(currentTime); } if (protagonista.bubble) protagonista.bubble = false; protagonista.superdashUntil = currentTime + SUPERDASH_TIME_WINDOW; protagonista.isSuperdash = true; enemies.splice(i, 1); }
+                else { isGameOver = true; break; }
+            }
+
+            // Nube vs Lluvia
+            if (!isGameOver && enemy.rainCurtain && enemies.includes(enemy)) {
+                const rect = { x: enemy.x - enemy.radius * 1.5, y: enemy.y + enemy.radius, width: 3 * enemy.radius, height: canvas.height - (enemy.y + enemy.radius) };
+                let hitRain = false; const pcircles = getProtagonistCircles(protagonista); for(let pc of pcircles){ if(isCircleRectColliding({x: pc.x, y: pc.y}, pc.r, rect)){ hitRain=true; break; } }
+                if (hitRain) {
+                    if (protagonista.isSuperdash) { spawnEvaporationEffect(enemy.x, enemy.y, enemy.radius); enemies.splice(i, 1); score += 3; }
+                    else if (protagonista.rainbow || protagonista.bubble) { spawnEvaporationEffect(enemy.x, enemy.y, enemy.radius); protagonista.superdashUntil = currentTime + SUPERDASH_TIME_WINDOW; protagonista.isSuperdash = true; if (protagonista.bubble) protagonista.bubble = false; enemies.splice(i, 1); score += 1; }
+                    else { isGameOver = true; break; }
+                }
+            }
+        } // Fin bucle enemigos
+
+        // Nube vs Pájaros
+        if (!isGameOver) {
+            for (let i = birds.length - 1; i >= 0; i--) {
+                let bird = birds[i]; if (bird.level !== protagonista.level) continue;
+                if (isPreciseBirdCollision(protagonista, bird)) {
+                    switch(bird.type) {
+                        case "red": if(!sunsetEffect) { sunsetEffect = { startTime:currentTime, fadeInDuration:2000, fullDuration:5000, fadeOutDuration:2000, sunX:Math.random()*canvas.width, sunY:Math.random()*canvas.height, sunRadius:50, triggered:false, level:protagonista.level, fixedLevel:true }; } score += 15; break;
+                        case "rainbow": if(!rainbowEntity) { rainbowEntity = { spawnTime:currentTime, fadeDuration:RAINBOW_FADE_DURATION, duration:RAINBOW_DURATION, x:-canvas.width/2, y:Math.random()*(canvas.height-100), width:canvas.width*2, height:100, angle:Math.random()*Math.PI*2, level:protagonista.level, fixedLevel:true }; } score += 10; break;
+                        default: protagonista.bubble = true; score += 5; break;
+                    } birds.splice(i, 1);
+                }
+            }
+        }
+
+        // Nube vs Arcoíris Físico
+        if (!isGameOver && rainbowEntity && rainbowEntity.level === protagonista.level && currentTime - rainbowEntity.spawnTime >= rainbowEntity.fadeDuration) {
+            let hitRainbow = false; const pcircles = getProtagonistCircles(protagonista); for(let pc of pcircles){ if(isCircleRotatedRectColliding({x: pc.x, y: pc.y}, pc.r, rainbowEntity)){ hitRainbow=true; break; } }
+            if (hitRainbow) { protagonista.rainbow = true; protagonista.rainbowUntil = currentTime + RAINBOW_MODE_DURATION; rainbowEntity = null; score += 20; }
+        }
+
+      } // Fin !isGameOver
+
+      // --- Dibujo ---
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       drawBackground(currentTime);
-      drawSuperdashTrails(currentTime);
-      drawSuperdashSparkles(currentTime);
-      drawBubbleSparkles(currentTime);
+      drawSuperdashTrails(currentTime); drawSuperdashSparkles(currentTime); drawBubbleSparkles(currentTime); // Partículas/Estelas
+       birds.forEach(b => { if (b.level === protagonista.level) drawBird(b, currentTime); });
+       if (rainbowEntity && rainbowEntity.level === protagonista.level) drawRainbow(rainbowEntity, currentTime);
+       enemies.forEach(e => { if (e.level === protagonista.level) { if (e.follower) drawFollowerCloud(e, protagonista); else { drawCloud(e.x - e.radius, e.y - e.radius, e.radius, "black"); if (e.giant) drawAngryFace(e.x, e.y - e.radius, e.radius); } if (e.rainCurtain) drawRainCurtain(e, currentTime); }});
       drawProtagonist(currentTime);
-      
-      for (let i = enemies.length - 1; i >= 0; i--) {
-        let enemy = enemies[i];
-        if (!enemy.follower && enemy.level !== protagonista.level) continue;
-        if (enemy.follower)
-          drawFollowerCloud(enemy, protagonista);
-        else {
-          drawCloud(enemy.x - enemy.radius, enemy.y - enemy.radius, enemy.radius, "black");
-          if (enemy.giant)
-            drawAngryFace(enemy.x, enemy.y, enemy.radius);
-          if (enemy.rainCurtain) {
-            drawRainCurtain(enemy, currentTime);
-            const rect = {
-              x: enemy.x - enemy.radius,
-              y: enemy.y + enemy.radius,
-              width: 3 * enemy.radius,
-              height: canvas.height - (enemy.y + enemy.radius)
-            };
-            if (isCircleRectColliding(protagonista, PROTAGONISTA_RADIUS, rect)) {
-              if (protagonista.isSuperdash) {
-                spawnEvaporationEffect(enemy.x, enemy.y, enemy.radius);
-                enemies.splice(i, 1);
-              } else if (protagonista.rainbow || protagonista.bubble) {
-                spawnEvaporationEffect(enemy.x, enemy.y, enemy.radius);
-                protagonista.superdashUntil = currentTime + SUPERDASH_TIME_WINDOW;
-                protagonista.isSuperdash = true;
-                if (protagonista.bubble)
-                  protagonista.bubble = false;
-                enemies.splice(i, 1);
-              } else {
-                isGameOver = true;
-              }
-            }
-          }
-        }
-        if (!isPaused && !isGameOver && isPreciseCloudCollision(protagonista, enemy)) {
-          if (protagonista.isSuperdash) {
-            spawnEvaporationEffect(enemy.x, enemy.y, enemy.radius);
-            enemies.splice(i, 1);
-          } else if (protagonista.rainbow || protagonista.bubble) {
-            spawnEvaporationEffect(enemy.x, enemy.y, enemy.radius);
-            if (enemy.giant) {
-              giantCloudKills++;
-              let requiredKills = (currentStormThreshold === 800) ? 6 : 3;
-              if (giantCloudKills >= requiredKills)
-                beginStormEnding(currentTime);
-            }
-            if (protagonista.bubble)
-              protagonista.bubble = false;
-            protagonista.superdashUntil = currentTime + SUPERDASH_TIME_WINDOW;
-            protagonista.isSuperdash = true;
-            enemies.splice(i, 1);
-          } else {
-            isGameOver = true;
-          }
-        }
-      }
-      
-      for (let i = birds.length - 1; i >= 0; i--) {
-        let bird = birds[i];
-        if (bird.level !== protagonista.level) continue;
-        drawBird(bird, currentTime);
-        if (!isPaused && !isGameOver && isPreciseBirdCollision(protagonista, bird)) {
-          birds.splice(i, 1);
-          switch(bird.type) {
-            case "red":
-              sunsetEffect = {
-                startTime: currentTime,
-                fadeInDuration: 2000,
-                fullDuration: 5000,
-                fadeOutDuration: 2000,
-                sunX: Math.random() * canvas.width,
-                sunY: Math.random() * canvas.height,
-                sunRadius: 50,
-                triggered: false,
-                level: protagonista.level,
-                fixedLevel: true
-              };
-              break;
-            case "rainbow":
-              rainbowEntity = {
-                spawnTime: currentTime,
-                fadeDuration: RAINBOW_FADE_DURATION,
-                duration: RAINBOW_DURATION,
-                x: -canvas.width / 2,
-                y: Math.random() * (canvas.height - 100),
-                width: canvas.width * 2,
-                height: 100,
-                angle: Math.random() * Math.PI * 2,
-                level: protagonista.level,
-                fixedLevel: true
-              };
-              break;
-            case "normal":
-            default:
-              protagonista.bubble = true;
-              break;
-          }
-        }
-      }
-      
-      if (rainbowEntity && rainbowEntity.level === protagonista.level) {
-        if (currentTime - rainbowEntity.spawnTime > rainbowEntity.duration)
-          rainbowEntity = null;
-        else {
-          if (currentTime - rainbowEntity.spawnTime >= rainbowEntity.fadeDuration) {
-            if (!isPaused && !isGameOver && isCircleRotatedRectColliding(protagonista, PROTAGONISTA_RADIUS, rainbowEntity)) {
-              protagonista.rainbow = true;
-              protagonista.rainbowUntil = currentTime + RAINBOW_MODE_DURATION;
-              rainbowEntity = null;
-            }
-          }
-          if (rainbowEntity)
-            drawRainbow(rainbowEntity, currentTime);
-        }
-      }
-      
       drawEvaporationParticles(currentTime);
-      drawScore();
-      drawBirdGrid();  // Dibuja la cuadrícula de niveles y alerta de pájaros
-      
+      drawScore(); drawBirdGrid(); // UI
+
+      // --- Mensaje Game Over ---
       if (isGameOver) {
-        ctx.fillStyle = "rgba(0,0,0,0.5)";
-        ctx.font = "40px Arial";
-        ctx.fillText("GAME OVER", canvas.width / 2 - 100, canvas.height / 2);
-      } else if (isPaused) {
-        ctx.fillStyle = "rgba(0,0,0,0.5)";
-        ctx.font = "40px Arial";
-        ctx.fillText("PAUSE", canvas.width / 2 - 50, canvas.height / 2);
+        ctx.save(); ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillRect(0, canvas.height / 2 - 50, canvas.width, 100); ctx.fillStyle = "white"; ctx.font = "bold 40px Arial"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText("GAME OVER", canvas.width / 2, canvas.height / 2 - 10); ctx.font = "20px Arial"; ctx.fillText("TAP TO RESTART", canvas.width / 2, canvas.height / 2 + 30); ctx.restore();
       }
+
+      // Siguiente frame
       requestAnimationFrame(gameLoop);
     }
 
     // ======================= DIBUJO DE LA CARA EN NUBES GIGANTES =======================
     function drawAngryFace(centerX, centerY, radius) {
       ctx.save();
-      const eyeOffsetX = radius * 0.4;
-      const eyeOffsetY = radius * 0.3;
-      const eyeRadius = radius * 0.15;
-      ctx.beginPath();
-      ctx.arc(centerX - eyeOffsetX, centerY - eyeOffsetY, eyeRadius, 0, Math.PI * 2);
-      ctx.fillStyle = "white";
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(centerX + eyeOffsetX, centerY - eyeOffsetY, eyeRadius, 0, Math.PI * 2);
-      ctx.fillStyle = "white";
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(centerX - eyeOffsetX + 2, centerY - eyeOffsetY, eyeRadius * 0.5, 0, Math.PI * 2);
-      ctx.fillStyle = "black";
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(centerX + eyeOffsetX + 2, centerY - eyeOffsetY, eyeRadius * 0.5, 0, Math.PI * 2);
-      ctx.fillStyle = "black";
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(centerX - eyeOffsetX - eyeRadius, centerY - eyeOffsetY - eyeRadius);
-      ctx.lineTo(centerX - eyeOffsetX + eyeRadius, centerY - eyeOffsetY - eyeRadius * 1.5);
-      ctx.strokeStyle = "black";
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(centerX + eyeOffsetX - eyeRadius, centerY - eyeOffsetY - eyeRadius * 1.5);
-      ctx.lineTo(centerX + eyeOffsetX + eyeRadius, centerY - eyeOffsetY - eyeRadius);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(centerX, centerY + radius * 0.2, radius * 0.4, 0, Math.PI, true);
-      ctx.stroke();
+      const eyeOffsetX = radius * 0.4; const eyeOffsetY = radius * 0.3; const eyeRadius = radius * 0.15; const pupilRadius = eyeRadius * 0.5;
+      ctx.fillStyle = "white"; ctx.beginPath(); ctx.arc(centerX - eyeOffsetX, centerY - eyeOffsetY, eyeRadius, 0, Math.PI * 2); ctx.fill(); ctx.beginPath(); ctx.arc(centerX + eyeOffsetX, centerY - eyeOffsetY, eyeRadius, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = "black"; ctx.beginPath(); ctx.arc(centerX - eyeOffsetX + 2, centerY - eyeOffsetY, pupilRadius, 0, Math.PI * 2); ctx.fill(); ctx.beginPath(); ctx.arc(centerX + eyeOffsetX + 2, centerY - eyeOffsetY, pupilRadius, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = "black"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(centerX - eyeOffsetX - eyeRadius, centerY - eyeOffsetY - eyeRadius); ctx.lineTo(centerX - eyeOffsetX + eyeRadius, centerY - eyeOffsetY - eyeRadius * 1.5); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(centerX + eyeOffsetX - eyeRadius, centerY - eyeOffsetY - eyeRadius * 1.5); ctx.lineTo(centerX + eyeOffsetX + eyeRadius, centerY - eyeOffsetY - eyeRadius); ctx.stroke();
+      ctx.beginPath(); ctx.arc(centerX, centerY + radius * 0.2, radius * 0.4, 0, Math.PI, true); ctx.stroke();
       ctx.restore();
     }
 
     // ======================= REINICIO DEL JUEGO =======================
     function resetGame() {
-      isGameOver = false;
-      isPaused = true;
-      gameStarted = false;
-      inStorm = false;
-      stormState = "none";
-      currentStormThreshold = 400;
-      giantCloudKills = 0;
-      stormTransitionStart = null;
-      stormEndingTransitionStart = null;
-      protagonista.x = canvas.width / 2;
-      protagonista.y = canvas.height / 2;
-      protagonista.level = 1;
-      protagonista.vx = PROTAGONISTA_SPEED;
+      isGameOver = false; isPaused = true; gameStarted = false; inStorm = false; stormState = "none";
+      currentStormThreshold = 400; giantCloudKills = 0; stormTransitionStart = null; stormEndingTransitionStart = null;
+      protagonista.x = canvas.width / 2; protagonista.y = canvas.height / 2; protagonista.level = 1;
+      protagonista.vx = 0; // Empezar quieto tras reset
       protagonista.vy = 0;
-      protagonista.rainbow = false;
-      protagonista.rainbowUntil = 0;
-      protagonista.bubble = false;
-      protagonista.isDashing = false;
-      protagonista.dashRemainingTime = 0;
-      protagonista.dashVelX = 0;
-      protagonista.dashVelY = 0;
-      protagonista.isSuperdash = false;
-      protagonista.superdashUntil = 0;
-      score = 0;
-      enemies = [];
-      birds = [];
-      rainbowEntity = null;
-      enemySpawnAccumulator = 0;
-      lightningBolts = [];
-      sunsetEffect = null;
-      evaporationParticles = [];
-      superdashTrails = [];
-      superdashSparkles = [];
-      bubbleSparkles = [];
+      protagonista.rainbow = false; protagonista.rainbowUntil = 0; protagonista.bubble = false;
+      protagonista.isDashing = false; protagonista.dashRemainingTime = 0; protagonista.dashVelX = 0; protagonista.dashVelY = 0;
+      protagonista.isSuperdash = false; protagonista.superdashUntil = 0;
+      lastInputDirection = null; lastInputTime = 0;
+      score = 0; enemies = []; birds = []; rainbowEntity = null; enemySpawnAccumulator = 0;
+      lightningBolts = []; sunsetEffect = null; evaporationParticles = []; superdashTrails = []; superdashSparkles = []; bubbleSparkles = [];
       lastTime = performance.now();
       clearInterval(birdSpawner);
+      spawnEnemy(); // Generar primer enemigo
       birdSpawner = setInterval(spawnBird, BIRD_SPAWN_INTERVAL);
+      requestAnimationFrame(gameLoop); // Asegurar que el loop siga para mostrar estado inicial
     }
 
-    // ======================= GENERACIÓN DE ENEMIGOS (nubes negras) =======================
+    // ======================= GENERACIÓN DE ENEMIGOS =======================
     function spawnEnemy() {
-      const side = Math.floor(Math.random() * 4);
-      let x, y, angle;
-      if (side === 0) {
-        x = -ENEMY_RADIUS;
-        y = Math.random() * canvas.height;
-      } else if (side === 1) {
-        x = canvas.width + ENEMY_RADIUS;
-        y = Math.random() * canvas.height;
-      } else if (side === 2) {
-        x = Math.random() * canvas.width;
-        y = -ENEMY_RADIUS;
-      } else {
-        x = Math.random() * canvas.width;
-        y = canvas.height + ENEMY_RADIUS;
-      }
-      angle = Math.atan2(canvas.height / 2 - y, canvas.width / 2 - x);
-      angle += (Math.random() - 0.5) * 0.4;
-      let vx = Math.cos(angle) * ENEMY_SPEED;
-      let vy = Math.sin(angle) * ENEMY_SPEED;
-      let enemy = { x: x, y: y, vx: vx, vy: vy, radius: ENEMY_RADIUS, giant: false, follower: false, rainCurtain: false };
-      
-      enemy.level = protagonista.level;
-      
+      const side = Math.floor(Math.random() * 4); let x, y;
+      if (side === 0) { x = -ENEMY_RADIUS; y = Math.random() * canvas.height; }
+      else if (side === 1) { x = canvas.width + ENEMY_RADIUS; y = Math.random() * canvas.height; }
+      else if (side === 2) { x = Math.random() * canvas.width; y = -ENEMY_RADIUS; }
+      else { x = Math.random() * canvas.width; y = canvas.height + ENEMY_RADIUS; }
+      let angle = Math.atan2(canvas.height / 2 - y, canvas.width / 2 - x) + (Math.random() - 0.5) * 0.4;
+      let vx = Math.cos(angle) * ENEMY_SPEED; let vy = Math.sin(angle) * ENEMY_SPEED;
+      let enemy = { x: x, y: y, vx: vx, vy: vy, radius: ENEMY_RADIUS, level: protagonista.level, giant: false, follower: false, rainCurtain: false, fillColor: "black" };
       const roll = Math.random();
-      if (roll < PROB_ENEMY_GIANT) {
-        enemy.giant = true;
-        enemy.radius = ENEMY_RADIUS * 3.5;
-        enemy.rainCurtain = (Math.random() < 0.2);
-        if (enemy.rainCurtain)
-          enemy.radius *= 2;
-      } else if (roll < PROB_ENEMY_GIANT + PROB_ENEMY_FOLLOWER) {
-        enemy.follower = true;
-        enemy.fillColor = "darkred";
-      } else if (roll < PROB_ENEMY_GIANT + PROB_ENEMY_FOLLOWER + PROB_ENEMY_RAIN) {
-        enemy.rainCurtain = true;
-        enemy.radius *= 2;
-      }
+      if (roll < PROB_ENEMY_GIANT) { enemy.giant = true; enemy.radius = ENEMY_RADIUS * 3.5; enemy.rainCurtain = (Math.random() < 0.2); if (enemy.rainCurtain) enemy.radius *= 2; }
+      else if (roll < PROB_ENEMY_GIANT + PROB_ENEMY_FOLLOWER) { enemy.follower = true; enemy.fillColor = "darkred"; }
+      else if (roll < PROB_ENEMY_GIANT + PROB_ENEMY_FOLLOWER + PROB_ENEMY_RAIN) { enemy.rainCurtain = true; enemy.radius *= 2; enemy.fillColor = "#4682B4"; } // Color lluvia
       enemies.push(enemy);
     }
 
     // ======================= GESTIÓN DE LOS PÁJAROS =======================
     function spawnBird() {
-      const x = -30;
-      const y = Math.random() * canvas.height;
-      const BIRD_SPEED = 6;
-      let r = Math.random();
-      let birdType, birdColor;
-      if (r < 0.5) {
-        birdType = "normal";
-        birdColor = "gray";
-      } else if (r < 0.8) {
-        birdType = "rainbow";
-        birdColor = "rainbow";
-      } else {
-        birdType = "red";
-        birdColor = "red";
-      }
-      // Asignar un nivel aleatorio entre 0, 1 y 2 para los pájaros.
+      if (!gameStarted || isGameOver) return;
+      const x = -30; const y = Math.random() * canvas.height; const BIRD_SPEED = 6;
+      let r = Math.random(); let birdType, birdColor;
+      if (r < 0.5) { birdType = "normal"; birdColor = "gray"; }
+      else if (r < 0.8) { birdType = "rainbow"; birdColor = "rainbow"; }
+      else { birdType = "red"; birdColor = "red"; }
       let randomLevel = Math.floor(Math.random() * 3);
-      // Solo se permitirá un pájaro por nivel. Si ya existe, no se genera uno nuevo.
-      if (birds.some(b => b.level === randomLevel)) {
-        return;
-      }
-      birds.push({ 
-        x: x, 
-        y: y, 
-        vx: BIRD_SPEED, 
-        vy: 0, 
-        type: birdType, 
-        color: birdColor, 
-        level: randomLevel, 
-        fixedLevel: true
-      });
+      birds.push({ x: x, y: y, vx: BIRD_SPEED, vy: 0, type: birdType, color: birdColor, level: randomLevel, fixedLevel: true });
     }
 
-    // Iniciar el primer enemigo, el generador de pájaros y el bucle principal.
-    spawnEnemy();
-    birdSpawner = setInterval(spawnBird, BIRD_SPAWN_INTERVAL);
-    requestAnimationFrame(gameLoop);
+    // --- INICIO DEL JUEGO ---
+    resetGame();
+
   </script>
 </body>
 </html>

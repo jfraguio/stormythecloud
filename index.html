@@ -20,6 +20,29 @@
   <canvas id="gameCanvas"></canvas>
   <script>
     "use strict";
+    // Audio de efecto al eliminar una nube
+    const popSound = new Audio("pop.mp3");
+    // Audio de música de fondo
+    const backgroundMusic = new Audio("music.mp3");
+    backgroundMusic.loop = true;
+    backgroundMusic.volume = 0.5;
+
+    // ================================
+    // NUEVOS SONIDOS AÑADIDOS
+    // ================================
+    const dashSound = new Audio("dash.mp3");
+    const superdashSound = new Audio("superdash.mp3");
+    const birdSound = new Audio("bird.mp3");
+    const rainbowSound = new Audio("rainbow.mp3");
+    const sunsetSound = new Audio("sunset.mp3");
+
+    // Función auxiliar para reproducir sonidos de forma inmediata
+    function playSound(sound) {
+      // Clona el objeto de audio para poder reproducirlo de inmediato incluso si ya se está reproduciendo uno previo
+      const s = sound.cloneNode();
+      s.play().catch(error => console.error("Error al reproducir sonido:", error));
+    }
+
     (function() {
 
       // ======================================================
@@ -52,7 +75,6 @@
       let lastTapTime = 0;
       const DOUBLE_TAP_THRESHOLD = 300; // milisegundos para considerar un doble tap
 
-
       // CONFIGURACIÓN DE LA TORMENTA
       let currentStormThreshold = 400;
       const LIGHTNING_INTERVAL = 3000;
@@ -69,8 +91,9 @@
       const DASH_DISTANCE    = 5 * (PROTAGONISTA_RADIUS * 2);
 
       // CONFIGURACIÓN DEL SUPERDASH
+      // IMPORTANTE: Se ha modificado el tiempo para que, al matar un enemigo, se reinicie a 2000ms (2 segundos).
       const SUPERDASH_MULTIPLIER     = 2;
-      const SUPERDASH_TIME_WINDOW    = 5000;
+      const SUPERDASH_TIME_WINDOW    = 2000;  // Antes era 5000; ahora se reinicia en 2 segundos
       const SUPERDASH_TRAIL_LIFETIME = 300;
 
       let lastInputDirection = null;
@@ -184,11 +207,6 @@
       }
       // --- Nueva versión para que coincida con drawCloud ---
       function getEnemyCircles(enemy) {
-        // Se asume que al dibujar la nube se utiliza:
-        // drawCloud(enemy.x - enemy.radius, enemy.y - enemy.radius, enemy.radius, "black");
-        // Por lo que los centros aproximados de sus arcos son:
-        //   (enemy.x - R, enemy.y - R), (enemy.x, enemy.y - 2R),
-        //   (enemy.x + R, enemy.y - R), (enemy.x, enemy.y)
         return [
           { x: enemy.x - enemy.radius, y: enemy.y - enemy.radius, r: enemy.radius },
           { x: enemy.x, y: enemy.y - 2 * enemy.radius, r: enemy.radius },
@@ -323,26 +341,50 @@
       function updatePosition(obj, radius, dtFactor) {
         obj.x += obj.vx * dtFactor;
         obj.y += obj.vy * dtFactor;
-        // Si el objeto tiene fixedLevel (por ejemplo, pájaros) se evita wrapping
-        if (obj.fixedLevel) return;
-        // Se elimina la condición de accumulate para que las nubes negras (y el resto) apliquen wrapping y cambio de nivel.
-        // Wrapping horizontal para el resto
+        
+        // Wrapping horizontal:
         if (obj.x < -radius) obj.x = canvas.width + radius;
         if (obj.x > canvas.width + radius) obj.x = -radius;
-        // Wrapping vertical o cambio de nivel para objetos con propiedad level
+        
         if (typeof obj.level === "number") {
-          if (obj.y < -radius) {
-            if (obj.level === 0) { obj.level = 1; obj.y = canvas.height - radius; }
-            else if (obj.level === 1) { obj.level = 2; obj.y = canvas.height - radius; }
-            else if (obj.level === 2) { obj.y = -radius; }
-          } else if (obj.y > canvas.height + radius) {
-            if (obj.level === 2) { obj.level = 1; obj.y = radius; }
-            else if (obj.level === 1) { obj.level = 0; obj.y = radius; }
-            else if (obj.level === 0) { obj.y = canvas.height + radius; }
-          }
-        } else {
-          if (obj.y < -radius) obj.y = canvas.height + radius;
-          if (obj.y > canvas.height + radius) obj.y = -radius;
+            if (obj.fillColor === "black" && !obj.giant && !obj.follower && !obj.rainCurtain) {
+              if (obj.level === 0 && obj.y >= canvas.height - radius) {
+                obj.y = canvas.height - radius;
+                obj.vy = -Math.abs(obj.vy);
+              }
+              else if (obj.level === 2 && obj.y <= radius) {
+                obj.y = radius;
+                obj.vy = Math.abs(obj.vy);
+              }
+              else {
+                if (obj.y < -radius) {
+                  if (obj.level === 0) { obj.level = 1; obj.y = canvas.height - radius; }
+                  else if (obj.level === 1) { obj.level = 2; obj.y = canvas.height - radius; }
+                  else if (obj.level === 2) { obj.y = -radius; }
+                }
+                else if (obj.y > canvas.height + radius) {
+                  if (obj.level === 2) { obj.level = 1; obj.y = radius; }
+                  else if (obj.level === 1) { obj.level = 0; obj.y = radius; }
+                  else if (obj.level === 0) { obj.y = canvas.height + radius; }
+                }
+              }
+            }
+            else {
+              if (obj.y < -radius) {
+                if (obj.level === 0) { obj.level = 1; obj.y = canvas.height - radius; }
+                else if (obj.level === 1) { obj.level = 2; obj.y = canvas.height - radius; }
+                else if (obj.level === 2) { obj.y = -radius; }
+              }
+              else if (obj.y > canvas.height + radius) {
+                if (obj.level === 2) { obj.level = 1; obj.y = radius; }
+                else if (obj.level === 1) { obj.level = 0; obj.y = radius; }
+                else if (obj.level === 0) { obj.y = canvas.height + radius; }
+              }
+            }
+        }
+        else {
+            if (obj.y < -radius) obj.y = canvas.height + radius;
+            if (obj.y > canvas.height + radius) obj.y = -radius;
         }
       }
 
@@ -893,6 +935,7 @@
           gameStarted = true;
           isPaused = false;
           lastTime = performance.now();
+          backgroundMusic.play();
         }
         if (e.code === "Space") {
           e.preventDefault();
@@ -924,6 +967,12 @@
               protagonista.dashRemainingTime = DASH_DURATION;
               protagonista.dashVelX = direction.x * (DASH_DISTANCE * dashMultiplier) / (DASH_DURATION / 1000);
               protagonista.dashVelY = direction.y * (DASH_DISTANCE * dashMultiplier) / (DASH_DURATION / 1000);
+              // Reproducir sonido de dash o superdash inmediatamente
+              if (protagonista.isSuperdash) {
+                  playSound(superdashSound);
+              } else {
+                  playSound(dashSound);
+              }
               lastInputDirection = null;
               lastInputTime = 0;
             } else {
@@ -960,12 +1009,9 @@
         touchStartX = null; touchStartY = null;
         e.preventDefault();
 
-        // Si el movimiento es muy pequeño, consideramos que es un tap
         if (Math.abs(deltaX) < tapThreshold && Math.abs(deltaY) < tapThreshold && touchDuration < tapTimeThreshold) {
             const currentTapTime = performance.now();
             if (currentTapTime - lastTapTime < DOUBLE_TAP_THRESHOLD) {
-                // Se detectó un doble tap
-                // Se realiza el dash/superdash en la dirección en la que se está moviendo la nube (protagonista)
                 let dashDirection = { x: 0, y: 0 };
                 if (protagonista.vx !== 0 || protagonista.vy !== 0) {
                     const mag = Math.hypot(protagonista.vx, protagonista.vy);
@@ -979,16 +1025,22 @@
                 protagonista.dashRemainingTime = DASH_DURATION;
                 protagonista.dashVelX = dashDirection.x * (DASH_DISTANCE * dashMultiplier) / (DASH_DURATION / 1000);
                 protagonista.dashVelY = dashDirection.y * (DASH_DISTANCE * dashMultiplier) / (DASH_DURATION / 1000);
+                // Reproducir sonido de dash o superdash (touch) al instante
+                if (protagonista.isSuperdash) {
+                    playSound(superdashSound);
+                } else {
+                    playSound(dashSound);
+                }
                 lastTapTime = 0;
-                return; // No continuar con el procesamiento del tap normal
+                return;
             } else {
-                // Es el primer tap; guarda el tiempo y continúa con la lógica normal (inicio de juego, pausar, etc.)
                 lastTapTime = currentTapTime;
                 if (isGameOver) { resetGame(); return; }
                 if (!gameStarted) {
                     gameStarted = true;
                     isPaused = false;
                     lastTime = performance.now();
+                    backgroundMusic.play();
                     return;
                 }
                 const rect = canvas.getBoundingClientRect();
@@ -1002,7 +1054,6 @@
             }
         }
 
-        // Si no es tap (por ejemplo, es un swipe), continúa con la lógica existente para swipe:
         if (Math.abs(deltaX) > swipeThreshold || Math.abs(deltaY) > swipeThreshold) {
             if (!gameStarted) {
                 gameStarted = true;
@@ -1027,6 +1078,12 @@
                         protagonista.dashRemainingTime = DASH_DURATION;
                         protagonista.dashVelX = direction.x * (DASH_DISTANCE * dashMultiplier) / (DASH_DURATION / 1000);
                         protagonista.dashVelY = direction.y * (DASH_DISTANCE * dashMultiplier) / (DASH_DURATION / 1000);
+                        // Reproducir sonido en swipe de dash de forma inmediata
+                        if (protagonista.isSuperdash) {
+                            playSound(superdashSound);
+                        } else {
+                            playSound(dashSound);
+                        }
                         lastInputDirection = null;
                         lastInputTime = 0;
                     } else {
@@ -1038,8 +1095,7 @@
                 }
             }
         }
-        }, { passive: false });
-
+      }, { passive: false });
 
       canvas.addEventListener('touchmove', function(e) {
         e.preventDefault();
@@ -1052,6 +1108,7 @@
             gameStarted = true;
             isPaused = false;
             lastTime = performance.now();
+            backgroundMusic.play();
             return;
           }
           const rect = canvas.getBoundingClientRect();
@@ -1174,14 +1231,12 @@
             }
             updatePosition(enemy, enemy.radius, dtFactor);
           });
-          // Gestión de eliminación de enemigos que saldrían totalmente de la pantalla por los laterales
           for (let i = enemies.length - 1; i >= 0; i--) {
             const enemy = enemies[i];
             if (enemy.x < -50 || enemy.x > canvas.width + 50) {
               enemies.splice(i, 1);
             }
           }
-          // Actualizar pájaros
           for (let i = birds.length - 1; i >= 0; i--) {
             const bird = birds[i];
             if (bird.level !== protagonista.level) continue;
@@ -1237,11 +1292,13 @@
                     enemies.splice(i, 1);
                   }
                 }
+                // Adelantamos la reproducción del sonido al contacto con el sol del sunset
+                playSound(sunsetSound);
                 sunsetEffect.triggered = true;
               }
             }
           }
-          // Colisiones de protagonista con enemigos (nubes negras y demás)
+          // Colisiones de protagonista con enemigos
           for (let i = enemies.length - 1; i >= 0; i--) {
             const enemy = enemies[i];
             if (enemy.level !== protagonista.level) continue;
@@ -1250,6 +1307,10 @@
                 spawnEvaporationEffect(enemy.x, enemy.y, enemy.radius);
                 enemies.splice(i, 1);
                 score += 5;
+                popSound.play();
+                // Reiniciar superdash a 2 segundos
+                protagonista.superdashUntil = currentTime + SUPERDASH_TIME_WINDOW;
+                protagonista.isSuperdash = true;
               } else if (protagonista.rainbow || protagonista.bubble) {
                 spawnEvaporationEffect(enemy.x, enemy.y, enemy.radius);
                 score += enemy.giant ? 10 : 2;
@@ -1259,9 +1320,11 @@
                   if (giantCloudKills >= req) beginStormEnding(currentTime);
                 }
                 if (protagonista.bubble) protagonista.bubble = false;
+                enemies.splice(i, 1);
+                popSound.play();
+                // Reiniciar superdash a 2 segundos
                 protagonista.superdashUntil = currentTime + SUPERDASH_TIME_WINDOW;
                 protagonista.isSuperdash = true;
-                enemies.splice(i, 1);
               } else {
                 isGameOver = true;
                 break;
@@ -1287,13 +1350,19 @@
                   spawnEvaporationEffect(enemy.x, enemy.y, enemy.radius);
                   enemies.splice(i, 1);
                   score += 3;
-                } else if (protagonista.rainbow || protagonista.bubble) {
-                  spawnEvaporationEffect(enemy.x, enemy.y, enemy.radius);
+                  popSound.play();
+                  // Reiniciar superdash a 2 segundos
                   protagonista.superdashUntil = currentTime + SUPERDASH_TIME_WINDOW;
                   protagonista.isSuperdash = true;
+                } else if (protagonista.rainbow || protagonista.bubble) {
+                  spawnEvaporationEffect(enemy.x, enemy.y, enemy.radius);
                   if (protagonista.bubble) protagonista.bubble = false;
                   enemies.splice(i, 1);
                   score += 1;
+                  popSound.play();
+                  // Reiniciar superdash a 2 segundos
+                  protagonista.superdashUntil = currentTime + SUPERDASH_TIME_WINDOW;
+                  protagonista.isSuperdash = true;
                 } else {
                   isGameOver = true;
                   break;
@@ -1347,6 +1416,8 @@
                   break;
               }
               birds.splice(i, 1);
+              // Adelantamos la reproducción del sonido de colisión con pájaro
+              playSound(birdSound);
             }
           }
           if (!isGameOver && rainbowEntity && rainbowEntity.level === protagonista.level &&
@@ -1364,6 +1435,8 @@
               protagonista.rainbowUntil = currentTime + RAINBOW_MODE_DURATION;
               rainbowEntity = null;
               score += 20;
+              // Adelantamos la reproducción del sonido al tocar el arcoíris
+              playSound(rainbowSound);
             }
           }
         }
@@ -1458,9 +1531,6 @@
           enemy.rainCurtain = true;
           enemy.radius *= 2;
           enemy.fillColor = "#4682B4";
-        } else {
-          // Nube negra normal: ya no se marca como accumulate para que aplique wrapping y cambio de nivel.
-          // (La eliminación si sale horizontalmente se gestiona en el gameLoop)
         }
         enemies.push(enemy);
       }
@@ -1487,7 +1557,6 @@
         }
         const randomLevel = Math.floor(Math.random() * 3);
         const vx = (side === "left") ? BIRD_SPEED : -BIRD_SPEED;
-        // Los pájaros se marcan con fixedLevel para que no se aplique wrapping
         birds.push({ x, y, vx, vy: 0, type: birdType, color: birdColor, level: randomLevel, fixedLevel: true });
       }
 
@@ -1534,6 +1603,11 @@
         lastTime = performance.now();
         clearInterval(birdSpawner);
         spawnEnemy();
+
+        // Reiniciar y reproducir la música de fondo
+        backgroundMusic.currentTime = 0;
+        backgroundMusic.play();
+
         birdSpawner = setInterval(spawnBird, BIRD_SPAWN_INTERVAL);
         requestAnimationFrame(gameLoop);
       }

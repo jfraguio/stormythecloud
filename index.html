@@ -38,7 +38,7 @@
 
     // Función auxiliar para reproducir sonidos de forma inmediata
     function playSound(sound) {
-      // Clona el objeto de audio para poder reproducirlo de inmediato incluso si ya se está reproduciendo uno previo
+      // Clona el objeto de audio para reproducirlo incluso si ya se está reproduciendo uno previo
       const s = sound.cloneNode();
       s.play().catch(error => console.error("Error al reproducir sonido:", error));
     }
@@ -93,7 +93,7 @@
       // CONFIGURACIÓN DEL SUPERDASH
       // IMPORTANTE: Se ha modificado el tiempo para que, al matar un enemigo, se reinicie a 2000ms (2 segundos).
       const SUPERDASH_MULTIPLIER     = 2;
-      const SUPERDASH_TIME_WINDOW    = 2000;  // Antes era 5000; ahora se reinicia en 2 segundos
+      const SUPERDASH_TIME_WINDOW    = 5000;
       const SUPERDASH_TRAIL_LIFETIME = 300;
 
       let lastInputDirection = null;
@@ -318,6 +318,7 @@
             ctx.lineWidth = 1;
           }
           ctx.strokeRect(x, y, cellSize, cellSize);
+          // Se muestra si existe algún pájaro asignado a este nivel
           const bird = birds.find(b => b.level === nivel);
           if (bird) {
             let dotColor = "black";
@@ -342,7 +343,7 @@
         obj.x += obj.vx * dtFactor;
         obj.y += obj.vy * dtFactor;
         
-        // Wrapping horizontal:
+        // Wrapping horizontal para objetos que lo requieran (nubes, enemigos, protagonista)
         if (obj.x < -radius) obj.x = canvas.width + radius;
         if (obj.x > canvas.width + radius) obj.x = -radius;
         
@@ -583,7 +584,7 @@
         const centerX = enemy.x;
         const centerY = enemy.y;
         ctx.save();
-        ctx.fillStyle = enemy.fillColor || "darkred";
+        ctx.fillStyle = enemy.fillColor || "darkorange";
         ctx.beginPath();
         ctx.arc(centerX - r * 0.6, centerY, r, 0, Math.PI * 2);
         ctx.fill();
@@ -935,7 +936,18 @@
           gameStarted = true;
           isPaused = false;
           lastTime = performance.now();
-          backgroundMusic.play();
+          // Se reproduce la música en respuesta directa a la interacción del usuario
+          backgroundMusic.play().catch(err => console.error("Error al reproducir música:", err));
+            dashSound.preload = "auto";
+            dashSound.load();
+            superdashSound.preload = "auto";
+            superdashSound.load();
+            birdSound.preload = "auto";
+            birdSound.load();
+            rainbowSound.preload = "auto";
+            rainbowSound.load();
+            sunsetSound.preload = "auto";
+            sunsetSound.load();
         }
         if (e.code === "Space") {
           e.preventDefault();
@@ -1040,7 +1052,8 @@
                     gameStarted = true;
                     isPaused = false;
                     lastTime = performance.now();
-                    backgroundMusic.play();
+                    // Reproduce la música en respuesta al toque del usuario
+                    backgroundMusic.play().catch(err => console.error("Error al reproducir música:", err));
                     return;
                 }
                 const rect = canvas.getBoundingClientRect();
@@ -1108,7 +1121,8 @@
             gameStarted = true;
             isPaused = false;
             lastTime = performance.now();
-            backgroundMusic.play();
+            // Reproduce la música cuando se hace clic por primera vez
+            backgroundMusic.play().catch(err => console.error("Error al reproducir música:", err));
             return;
           }
           const rect = canvas.getBoundingClientRect();
@@ -1162,6 +1176,7 @@
               if (e.rainCurtain) drawRainCurtain(e, currentTime);
             }
           });
+          // Se dibujan los pájaros únicamente si pertenecen al nivel visible
           birds.forEach(b => {
             if (b.level === protagonista.level)
               drawBird(b, currentTime);
@@ -1179,9 +1194,9 @@
           ctx.textAlign = "center";
           ctx.textBaseline = "middle";
           if (!gameStarted) {
-            ctx.fillText("STORMY THE CLOUD", canvas.width / 2, canvas.height / 2 - 10);
+            ctx.fillText("Stormy The Cloud", canvas.width / 2, canvas.height / 2 - 10);
             ctx.font = "20px Arial";
-            ctx.fillText("MOVE TO START", canvas.width / 2, canvas.height / 2 + 25);
+            ctx.fillText("⬅⬆⬇⮕ To MOVE / Double move to DASH", canvas.width / 2, canvas.height / 2 + 25);
           } else {
             ctx.fillText("PAUSA", canvas.width / 2, canvas.height / 2);
           }
@@ -1237,13 +1252,18 @@
               enemies.splice(i, 1);
             }
           }
+          // ======================================================
+          // ACTUALIZACIÓN DE LOS PÁJAROS:
+          // Se actualiza de forma independiente (sin wrapping)
           for (let i = birds.length - 1; i >= 0; i--) {
-            const bird = birds[i];
-            if (bird.level !== protagonista.level) continue;
-            updatePosition(bird, BIRD_COLLISION_RADIUS, dtFactor);
-            if ((bird.vx > 0 && bird.x > canvas.width + 50) ||
-                (bird.vx < 0 && bird.x < -50))
-              birds.splice(i, 1);
+              const bird = birds[i];
+              bird.x += bird.vx * dtFactor;
+              bird.y += bird.vy * dtFactor;
+              // Si el pájaro sale del lateral de la pantalla, se elimina
+              if ((bird.vx > 0 && bird.x > canvas.width + 50) ||
+                  (bird.vx < 0 && bird.x < -50)) {
+                  birds.splice(i, 1);
+              }
           }
           if (rainbowEntity && currentTime - rainbowEntity.spawnTime > rainbowEntity.duration) {
             rainbowEntity = null;
@@ -1292,13 +1312,13 @@
                     enemies.splice(i, 1);
                   }
                 }
-                // Adelantamos la reproducción del sonido al contacto con el sol del sunset
                 playSound(sunsetSound);
                 sunsetEffect.triggered = true;
               }
             }
           }
-          // Colisiones de protagonista con enemigos
+          // ======================================================
+          // COLISIONES DE PROTAGONISTA CON ENEMIGOS
           for (let i = enemies.length - 1; i >= 0; i--) {
             const enemy = enemies[i];
             if (enemy.level !== protagonista.level) continue;
@@ -1308,7 +1328,6 @@
                 enemies.splice(i, 1);
                 score += 5;
                 popSound.play();
-                // Reiniciar superdash a 2 segundos
                 protagonista.superdashUntil = currentTime + SUPERDASH_TIME_WINDOW;
                 protagonista.isSuperdash = true;
               } else if (protagonista.rainbow || protagonista.bubble) {
@@ -1322,7 +1341,6 @@
                 if (protagonista.bubble) protagonista.bubble = false;
                 enemies.splice(i, 1);
                 popSound.play();
-                // Reiniciar superdash a 2 segundos
                 protagonista.superdashUntil = currentTime + SUPERDASH_TIME_WINDOW;
                 protagonista.isSuperdash = true;
               } else {
@@ -1351,7 +1369,6 @@
                   enemies.splice(i, 1);
                   score += 3;
                   popSound.play();
-                  // Reiniciar superdash a 2 segundos
                   protagonista.superdashUntil = currentTime + SUPERDASH_TIME_WINDOW;
                   protagonista.isSuperdash = true;
                 } else if (protagonista.rainbow || protagonista.bubble) {
@@ -1360,7 +1377,6 @@
                   enemies.splice(i, 1);
                   score += 1;
                   popSound.play();
-                  // Reiniciar superdash a 2 segundos
                   protagonista.superdashUntil = currentTime + SUPERDASH_TIME_WINDOW;
                   protagonista.isSuperdash = true;
                 } else {
@@ -1370,7 +1386,8 @@
               }
             }
           }
-          // Colisión con pájaros
+          // ======================================================
+          // COLISIÓN CON PÁJAROS
           for (let i = birds.length - 1; i >= 0; i--) {
             const bird = birds[i];
             if (bird.level !== protagonista.level) continue;
@@ -1415,8 +1432,8 @@
                   score += 5;
                   break;
               }
+              // Se elimina el pájaro al colisionar
               birds.splice(i, 1);
-              // Adelantamos la reproducción del sonido de colisión con pájaro
               playSound(birdSound);
             }
           }
@@ -1435,7 +1452,6 @@
               protagonista.rainbowUntil = currentTime + RAINBOW_MODE_DURATION;
               rainbowEntity = null;
               score += 20;
-              // Adelantamos la reproducción del sonido al tocar el arcoíris
               playSound(rainbowSound);
             }
           }
@@ -1445,6 +1461,7 @@
         drawSuperdashTrails(currentTime);
         drawSuperdashSparkles(currentTime);
         drawBubbleSparkles(currentTime);
+        // Dibuja el pájaro únicamente si su nivel coincide con el del protagonista
         birds.forEach(b => {
           if (b.level === protagonista.level)
             drawBird(b, currentTime);
@@ -1526,7 +1543,7 @@
           if (enemy.rainCurtain) enemy.radius *= 2;
         } else if (roll < PROB_ENEMY_GIANT + PROB_ENEMY_FOLLOWER) {
           enemy.follower = true;
-          enemy.fillColor = "darkred";
+          enemy.fillColor = "darkorange";
         } else if (roll < PROB_ENEMY_GIANT + PROB_ENEMY_FOLLOWER + PROB_ENEMY_RAIN) {
           enemy.rainCurtain = true;
           enemy.radius *= 2;
@@ -1540,6 +1557,8 @@
       // ======================================================
       function spawnBird() {
         if (!gameStarted || isGameOver) return;
+        // No se crea un nuevo pájaro si ya existe uno vivo
+        if (birds.length > 0) return;
         const side = Math.random() < 0.5 ? "left" : "right";
         const x = (side === "left") ? -30 : canvas.width + 30;
         const y = Math.random() * canvas.height;
@@ -1557,6 +1576,7 @@
         }
         const randomLevel = Math.floor(Math.random() * 3);
         const vx = (side === "left") ? BIRD_SPEED : -BIRD_SPEED;
+        // Los pájaros tienen movimiento horizontal sin wrapping
         birds.push({ x, y, vx, vy: 0, type: birdType, color: birdColor, level: randomLevel, fixedLevel: true });
       }
 
@@ -1604,10 +1624,9 @@
         clearInterval(birdSpawner);
         spawnEnemy();
 
-        // Reiniciar y reproducir la música de fondo
+        // Reiniciamos la música de fondo pero NO la reproducimos automáticamente
         backgroundMusic.currentTime = 0;
-        backgroundMusic.play();
-
+        // backgroundMusic.play();  <-- Línea removida para evitar reproducción sin interacción
         birdSpawner = setInterval(spawnBird, BIRD_SPAWN_INTERVAL);
         requestAnimationFrame(gameLoop);
       }

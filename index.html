@@ -38,7 +38,6 @@
 
     // Función auxiliar para reproducir sonidos de forma inmediata
     function playSound(sound) {
-      // Clona el objeto de audio para reproducirlo incluso si ya se está reproduciendo uno previo
       const s = sound.cloneNode();
       s.play().catch(error => console.error("Error al reproducir sonido:", error));
     }
@@ -55,9 +54,7 @@
       const PROB_ENEMY_GIANT    = 0.1;
       const PROB_ENEMY_FOLLOWER = 0.1;
       const PROB_ENEMY_RAIN     = 0.1;
-      // PROB_ENEMY_NORMAL se deduce del resto
       const PROB_ENEMY_NORMAL   = 1 - (PROB_ENEMY_GIANT + PROB_ENEMY_FOLLOWER + PROB_ENEMY_RAIN);
-
       const BASE_ENEMY_INTERVAL          = 5000;
       const ENEMY_SPAWN_INTERVAL_FACTOR  = 0.7;
 
@@ -91,7 +88,6 @@
       const DASH_DISTANCE    = 5 * (PROTAGONISTA_RADIUS * 2);
 
       // CONFIGURACIÓN DEL SUPERDASH
-      // IMPORTANTE: Se ha modificado el tiempo para que, al matar un enemigo, se reinicie a 2000ms (2 segundos).
       const SUPERDASH_MULTIPLIER     = 2;
       const SUPERDASH_TIME_WINDOW    = 5000;
       const SUPERDASH_TRAIL_LIFETIME = 300;
@@ -174,6 +170,10 @@
       let superdashSparkles = [];
       let bubbleSparkles = [];
 
+      // ======================================================
+      // MODIFICACIONES: NUEVAS PROPIEDADES PARA SUPERDASH
+      // ======================================================
+      // Se agregan para llevar el conteo de enemigos asesinados y el radio dinámico de la burbuja amarilla.
       const protagonista = {
         x: canvas.width / 2,
         y: canvas.height / 2,
@@ -188,14 +188,17 @@
         dashVelX: 0,
         dashVelY: 0,
         isSuperdash: false,
-        superdashUntil: 0
+        superdashUntil: 0,
+        superdashKillCount: 0, // contador de enemigos asesinados durante superdash
+        bubbleRadius: PROTAGONISTA_RADIUS + BUBBLE_EXTRA_RADIUS // radio inicial de la burbuja amarilla
       };
+
       let enemies = [];
       let birds = [];
       let rainbowEntity = null;
 
       // ======================================================
-      // FUNCIONES DE COLISIÓN
+      // FUNCIONES DE COLISIÓN (sin cambios)
       // ======================================================
       function getProtagonistCircles(prot) {
         return [
@@ -205,7 +208,6 @@
           { x: prot.x, y: prot.y, r: PROTAGONISTA_RADIUS }
         ];
       }
-      // --- Nueva versión para que coincida con drawCloud ---
       function getEnemyCircles(enemy) {
         return [
           { x: enemy.x - enemy.radius, y: enemy.y - enemy.radius, r: enemy.radius },
@@ -262,7 +264,7 @@
       }
 
       // ======================================================
-      // ELEMENTOS DE FONDO
+      // INICIALIZACIÓN DEL FONDO Y ELEMENTOS DE ESCENA (sin cambios)
       // ======================================================
       let backgroundClouds = [];
       let backgroundParticles = [];
@@ -299,7 +301,7 @@
       initBackground();
 
       // ======================================================
-      // DIBUJO DE LA CUADRÍCULA (UI para pájaros)
+      // DIBUJO DE LA CUADRÍCULA (UI para pájaros) (sin cambios)
       // ======================================================
       function drawBirdGrid() {
         const gridX = SCORE_ZONE.x;
@@ -318,7 +320,6 @@
             ctx.lineWidth = 1;
           }
           ctx.strokeRect(x, y, cellSize, cellSize);
-          // Se muestra si existe algún pájaro asignado a este nivel
           const bird = birds.find(b => b.level === nivel);
           if (bird) {
             let dotColor = "black";
@@ -337,16 +338,13 @@
       }
 
       // ======================================================
-      // ACTUALIZACIÓN DE POSICIONES DE ENTIDADES
+      // FUNCIONES PARA ACTUALIZAR POSICIÓN Y FONDO (sin cambios)
       // ======================================================
       function updatePosition(obj, radius, dtFactor) {
         obj.x += obj.vx * dtFactor;
         obj.y += obj.vy * dtFactor;
-        
-        // Wrapping horizontal para objetos que lo requieran (nubes, enemigos, protagonista)
         if (obj.x < -radius) obj.x = canvas.width + radius;
         if (obj.x > canvas.width + radius) obj.x = -radius;
-        
         if (typeof obj.level === "number") {
             if (obj.fillColor === "black" && !obj.giant && !obj.follower && !obj.rainCurtain) {
               if (obj.level === 0 && obj.y >= canvas.height - radius) {
@@ -428,7 +426,19 @@
       }
 
       // ======================================================
-      // DIBUJO DEL FONDO Y EFECTOS
+      // MODIFICACIÓN: FUNCIÓN PARA ACTIVAR/REACTIVAR EL SUPERDASH
+      // ======================================================
+      function activateSuperdash(currentTime) {
+        if (!protagonista.isSuperdash) {
+          protagonista.isSuperdash = true;
+          protagonista.superdashKillCount = 0;
+          protagonista.bubbleRadius = PROTAGONISTA_RADIUS + BUBBLE_EXTRA_RADIUS;
+        }
+        protagonista.superdashUntil = currentTime + SUPERDASH_TIME_WINDOW;
+      }
+
+      // ======================================================
+      // DIBUJO DEL FONDO Y EFECTOS (sin cambios)
       // ======================================================
       function drawBackground(currentTime) {
         if (protagonista.level === 2) {
@@ -670,6 +680,9 @@
         ctx.restore();
       }
 
+      // ======================================================
+      // MODIFICACIÓN: DIBUJO DEL PROTAGONISTA CON BURBUJA DE SUPERDASH
+      // ======================================================
       function drawProtagonista(currentTime) {
         ctx.save();
         const { x, y } = protagonista;
@@ -724,15 +737,29 @@
         ctx.strokeStyle = "black";
         ctx.lineWidth = 2;
         ctx.stroke();
-        if (protagonista.bubble || protagonista.isSuperdash) {
+
+        // -------------------------------------------------------------------
+        // Dibujo de la burbuja:
+        // Si tiene el poder "bubble" se dibuja de la manera anterior,
+        // pero si está en modo superdash se dibuja una burbuja amarilla con radio dinámico.
+        // -------------------------------------------------------------------
+        if (protagonista.bubble) {
           ctx.save();
           ctx.lineWidth = 2;
-          const fillStyle = protagonista.bubble ? "rgba(255,255,255,0.3)" : "rgba(218,165,32,0.2)";
-          const strokeStyle = protagonista.bubble ? "rgba(200,200,200,0.8)" : "rgba(218,165,32,0.8)";
-          ctx.fillStyle = fillStyle;
-          ctx.strokeStyle = strokeStyle;
+          ctx.fillStyle = "rgba(255,255,255,0.3)";
+          ctx.strokeStyle = "rgba(200,200,200,0.8)";
           ctx.beginPath();
           ctx.arc(x, y - BUBBLE_OFFSET_Y, PROTAGONISTA_RADIUS + BUBBLE_EXTRA_RADIUS, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          ctx.restore();
+        } else if (protagonista.isSuperdash) {
+          ctx.save();
+          ctx.lineWidth = 2;
+          ctx.fillStyle = "rgba(255,255,0,0.3)";   // color amarillo translúcido
+          ctx.strokeStyle = "rgba(255,255,0,0.8)";
+          ctx.beginPath();
+          ctx.arc(x, y - BUBBLE_OFFSET_Y, protagonista.bubbleRadius, 0, Math.PI * 2);
           ctx.fill();
           ctx.stroke();
           ctx.restore();
@@ -787,7 +814,7 @@
       }
 
       // ======================================================
-      // EFECTOS PARTICULARES
+      // EFECTOS PARTICULARES (sin cambios)
       // ======================================================
       function spawnEvaporationEffect(x, y, radius) {
         const particleCount = 20;
@@ -891,9 +918,6 @@
         }
       }
 
-      // ======================================================
-      // DIBUJO DE LA CARA "ENOJADA" PARA NUBES GIGANTES
-      // ======================================================
       function drawAngryFace(centerX, centerY, radius) {
         ctx.save();
         const eyeOffsetX = radius * 0.4, eyeOffsetY = radius * 0.3;
@@ -929,14 +953,13 @@
       }
 
       // ======================================================
-      // CONTROLES (teclado y touch)
+      // CONTROLES (teclado y touch) (sin cambios)
       // ======================================================
       document.addEventListener('keydown', function(e) {
         if (!gameStarted && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
           gameStarted = true;
           isPaused = false;
           lastTime = performance.now();
-          // Se reproduce la música en respuesta directa a la interacción del usuario
           backgroundMusic.play().catch(err => console.error("Error al reproducir música:", err));
             dashSound.preload = "auto";
             dashSound.load();
@@ -979,7 +1002,6 @@
               protagonista.dashRemainingTime = DASH_DURATION;
               protagonista.dashVelX = direction.x * (DASH_DISTANCE * dashMultiplier) / (DASH_DURATION / 1000);
               protagonista.dashVelY = direction.y * (DASH_DISTANCE * dashMultiplier) / (DASH_DURATION / 1000);
-              // Reproducir sonido de dash o superdash inmediatamente
               if (protagonista.isSuperdash) {
                   playSound(superdashSound);
               } else {
@@ -1037,7 +1059,6 @@
                 protagonista.dashRemainingTime = DASH_DURATION;
                 protagonista.dashVelX = dashDirection.x * (DASH_DISTANCE * dashMultiplier) / (DASH_DURATION / 1000);
                 protagonista.dashVelY = dashDirection.y * (DASH_DISTANCE * dashMultiplier) / (DASH_DURATION / 1000);
-                // Reproducir sonido de dash o superdash (touch) al instante
                 if (protagonista.isSuperdash) {
                     playSound(superdashSound);
                 } else {
@@ -1052,7 +1073,6 @@
                     gameStarted = true;
                     isPaused = false;
                     lastTime = performance.now();
-                    // Reproduce la música en respuesta al toque del usuario
                     backgroundMusic.play().catch(err => console.error("Error al reproducir música:", err));
                     return;
                 }
@@ -1091,7 +1111,6 @@
                         protagonista.dashRemainingTime = DASH_DURATION;
                         protagonista.dashVelX = direction.x * (DASH_DISTANCE * dashMultiplier) / (DASH_DURATION / 1000);
                         protagonista.dashVelY = direction.y * (DASH_DISTANCE * dashMultiplier) / (DASH_DURATION / 1000);
-                        // Reproducir sonido en swipe de dash de forma inmediata
                         if (protagonista.isSuperdash) {
                             playSound(superdashSound);
                         } else {
@@ -1121,7 +1140,6 @@
             gameStarted = true;
             isPaused = false;
             lastTime = performance.now();
-            // Reproduce la música cuando se hace clic por primera vez
             backgroundMusic.play().catch(err => console.error("Error al reproducir música:", err));
             return;
           }
@@ -1176,7 +1194,6 @@
               if (e.rainCurtain) drawRainCurtain(e, currentTime);
             }
           });
-          // Se dibujan los pájaros únicamente si pertenecen al nivel visible
           birds.forEach(b => {
             if (b.level === protagonista.level)
               drawBird(b, currentTime);
@@ -1196,7 +1213,7 @@
           if (!gameStarted) {
             ctx.fillText("Stormy The Cloud", canvas.width / 2, canvas.height / 2 - 10);
             ctx.font = "20px Arial";
-            ctx.fillText("⬅⬆⬇⮕ To MOVE / Double move to DASH", canvas.width / 2, canvas.height / 2 + 25);
+            ctx.fillText("MOVE TO START", canvas.width / 2, canvas.height / 2 + 25);
           } else {
             ctx.fillText("PAUSA", canvas.width / 2, canvas.height / 2);
           }
@@ -1252,14 +1269,10 @@
               enemies.splice(i, 1);
             }
           }
-          // ======================================================
-          // ACTUALIZACIÓN DE LOS PÁJAROS:
-          // Se actualiza de forma independiente (sin wrapping)
           for (let i = birds.length - 1; i >= 0; i--) {
               const bird = birds[i];
               bird.x += bird.vx * dtFactor;
               bird.y += bird.vy * dtFactor;
-              // Si el pájaro sale del lateral de la pantalla, se elimina
               if ((bird.vx > 0 && bird.x > canvas.width + 50) ||
                   (bird.vx < 0 && bird.x < -50)) {
                   birds.splice(i, 1);
@@ -1319,17 +1332,40 @@
           }
           // ======================================================
           // COLISIONES DE PROTAGONISTA CON ENEMIGOS
+          // ======================================================
           for (let i = enemies.length - 1; i >= 0; i--) {
             const enemy = enemies[i];
             if (enemy.level !== protagonista.level) continue;
             if (isPreciseCloudCollision(protagonista, enemy)) {
               if (protagonista.isSuperdash) {
+                // -----------------------------
+                // MODIFICACIÓN: Aplicar efecto de burbuja amarilla para superdash.
+                // Al matar un enemigo, aumentar el contador y el radio de la burbuja.
+                // Si se alcanzan 100 kills, explota la burbuja y se eliminan todos los enemigos del nivel.
+                // -----------------------------
                 spawnEvaporationEffect(enemy.x, enemy.y, enemy.radius);
                 enemies.splice(i, 1);
                 score += 5;
                 popSound.play();
-                protagonista.superdashUntil = currentTime + SUPERDASH_TIME_WINDOW;
-                protagonista.isSuperdash = true;
+                activateSuperdash(currentTime);
+                protagonista.superdashKillCount++;
+                if (protagonista.superdashKillCount >= 5) {
+                  // Explosión de la burbuja: eliminar todos los enemigos del nivel
+                  for (let j = enemies.length - 1; j >= 0; j--) {
+                    if (enemies[j].level === protagonista.level) {
+                      spawnEvaporationEffect(enemies[j].x, enemies[j].y, enemies[j].radius);
+                      enemies.splice(j, 1);
+                    }
+                  }
+                  // Terminar el poder superdash
+                  protagonista.isSuperdash = false;
+                  protagonista.superdashKillCount = 0;
+                  protagonista.bubbleRadius = PROTAGONISTA_RADIUS + BUBBLE_EXTRA_RADIUS;
+                  // (Opcional: reproducir sonido de explosión)
+                } else {
+                  // Incrementar la burbuja en un 20%
+                  protagonista.bubbleRadius *= 1.2;
+                }
               } else if (protagonista.rainbow || protagonista.bubble) {
                 spawnEvaporationEffect(enemy.x, enemy.y, enemy.radius);
                 score += enemy.giant ? 10 : 2;
@@ -1388,6 +1424,7 @@
           }
           // ======================================================
           // COLISIÓN CON PÁJAROS
+          // ======================================================
           for (let i = birds.length - 1; i >= 0; i--) {
             const bird = birds[i];
             if (bird.level !== protagonista.level) continue;
@@ -1432,7 +1469,6 @@
                   score += 5;
                   break;
               }
-              // Se elimina el pájaro al colisionar
               birds.splice(i, 1);
               playSound(birdSound);
             }
@@ -1461,7 +1497,6 @@
         drawSuperdashTrails(currentTime);
         drawSuperdashSparkles(currentTime);
         drawBubbleSparkles(currentTime);
-        // Dibuja el pájaro únicamente si su nivel coincide con el del protagonista
         birds.forEach(b => {
           if (b.level === protagonista.level)
             drawBird(b, currentTime);
@@ -1499,9 +1534,6 @@
         requestAnimationFrame(gameLoop);
       }
 
-      // ======================================================
-      // DEFINICIÓN DE LA FUNCIÓN drawSuperdashTrails
-      // ======================================================
       function drawSuperdashTrails(currentTime) {
         for (let i = superdashTrails.length - 1; i >= 0; i--) {
           const trail = superdashTrails[i];
@@ -1521,9 +1553,6 @@
         }
       }
 
-      // ======================================================
-      // GENERACIÓN DE ENEMIGOS (nubes negras y otros)
-      // ======================================================
       function spawnEnemy() {
         const side = Math.floor(Math.random() * 4);
         let x, y;
@@ -1552,12 +1581,8 @@
         enemies.push(enemy);
       }
 
-      // ======================================================
-      // GESTIÓN DE LOS PÁJAROS
-      // ======================================================
       function spawnBird() {
         if (!gameStarted || isGameOver) return;
-        // No se crea un nuevo pájaro si ya existe uno vivo
         if (birds.length > 0) return;
         const side = Math.random() < 0.5 ? "left" : "right";
         const x = (side === "left") ? -30 : canvas.width + 30;
@@ -1576,13 +1601,9 @@
         }
         const randomLevel = Math.floor(Math.random() * 3);
         const vx = (side === "left") ? BIRD_SPEED : -BIRD_SPEED;
-        // Los pájaros tienen movimiento horizontal sin wrapping
         birds.push({ x, y, vx, vy: 0, type: birdType, color: birdColor, level: randomLevel, fixedLevel: true });
       }
 
-      // ======================================================
-      // REINICIO DEL JUEGO
-      // ======================================================
       function resetGame() {
         isGameOver = false;
         isPaused = true;
@@ -1607,6 +1628,8 @@
         protagonista.dashVelY = 0;
         protagonista.isSuperdash = false;
         protagonista.superdashUntil = 0;
+        protagonista.superdashKillCount = 0;
+        protagonista.bubbleRadius = PROTAGONISTA_RADIUS + BUBBLE_EXTRA_RADIUS;
         lastInputDirection = null;
         lastInputTime = 0;
         score = 0;
@@ -1623,17 +1646,11 @@
         lastTime = performance.now();
         clearInterval(birdSpawner);
         spawnEnemy();
-
-        // Reiniciamos la música de fondo pero NO la reproducimos automáticamente
         backgroundMusic.currentTime = 0;
-        // backgroundMusic.play();  <-- Línea removida para evitar reproducción sin interacción
         birdSpawner = setInterval(spawnBird, BIRD_SPAWN_INTERVAL);
         requestAnimationFrame(gameLoop);
       }
 
-      // ======================================================
-      // INICIO DEL JUEGO
-      // ======================================================
       resetGame();
 
     })();
